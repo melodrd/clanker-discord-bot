@@ -1,0 +1,9 @@
+node_modules
+dist
+data
+recordings
+backups
+.env
+.git
+.gitignore
+*.log
