@@ -1,7 +1,7 @@
-import type { VoiceConnection } from "@discordjs/voice";
-import type { Guild } from "discord.js";
 import type { WriteStream } from "node:fs";
 import type { Readable } from "node:stream";
+import type { VoiceConnection } from "@discordjs/voice";
+import type { Guild } from "discord.js";
 
 export type ActiveSegment = {
   segmentId: string;
@@ -19,6 +19,7 @@ export type ActiveRecordingSession = {
   sessionId: string;
   guildId: string;
   channelId: string;
+  startedByDiscordUserId: string;
   startedAt: string;
   guild: Guild;
   connection: VoiceConnection;
@@ -27,6 +28,10 @@ export type ActiveRecordingSession = {
   segmentTasks: Set<Promise<void>>;
   transcriptionTasks: Set<Promise<void>>;
   cancelledSegmentIds: Set<string>;
+  maxDurationStopAt: number | null;
+  maxDurationTimer?: NodeJS.Timeout;
+  idleStopAt: number | null;
+  idleStopTimer?: NodeJS.Timeout;
   stopping: boolean;
 };
 

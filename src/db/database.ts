@@ -1,10 +1,10 @@
-import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { migrate } from "./schema.js";
+import Database from "better-sqlite3";
 import { createId } from "../utils/ids.js";
 import { log } from "../utils/log.js";
 import { nowIso } from "../utils/time.js";
+import { migrate } from "./schema.js";
 
 export type RecordingSessionStatus =
   | "recording"
@@ -14,7 +14,12 @@ export type RecordingSessionStatus =
   | "failed"
   | "cancelled";
 
-export type AudioSegmentStatus = "recording" | "saved" | "transcribing" | "transcribed" | "failed";
+export type AudioSegmentStatus =
+  | "recording"
+  | "saved"
+  | "transcribing"
+  | "transcribed"
+  | "failed";
 
 export type RecordingParticipant = {
   id: string;
@@ -90,7 +95,11 @@ export class AppDatabase {
   updateRecordingSessionStatus(
     sessionId: string,
     status: RecordingSessionStatus,
-    options: { stoppedAt?: string; completedAt?: string; error?: string | null } = {},
+    options: {
+      stoppedAt?: string;
+      completedAt?: string;
+      error?: string | null;
+    } = {},
   ): void {
     this.db
       .prepare(
@@ -125,7 +134,9 @@ export class AppDatabase {
            from recording_participants
            where session_id = ? and discord_user_id = ?`,
         )
-        .get(input.sessionId, input.discordUserId) as RecordingParticipant | undefined;
+        .get(input.sessionId, input.discordUserId) as
+        | RecordingParticipant
+        | undefined;
 
       if (existing) {
         this.db
@@ -144,7 +155,9 @@ export class AppDatabase {
       }
 
       const participantCount = this.db
-        .prepare(`select count(*) as count from recording_participants where session_id = ?`)
+        .prepare(
+          `select count(*) as count from recording_participants where session_id = ?`,
+        )
         .get(input.sessionId) as CountRow;
 
       const timestamp = nowIso();
@@ -241,7 +254,13 @@ export class AppDatabase {
              updated_at = ?
          where id = ?`,
       )
-      .run(input.endedAt, input.relativeEndMs, input.sizeBytes, nowIso(), input.segmentId);
+      .run(
+        input.endedAt,
+        input.relativeEndMs,
+        input.sizeBytes,
+        nowIso(),
+        input.segmentId,
+      );
   }
 
   markAudioSegmentTranscribing(segmentId: string): void {
@@ -329,7 +348,9 @@ export class AppDatabase {
 
   getSessionStats(sessionId: string): SessionStats {
     const participants = this.db
-      .prepare(`select count(*) as count from recording_participants where session_id = ?`)
+      .prepare(
+        `select count(*) as count from recording_participants where session_id = ?`,
+      )
       .get(sessionId) as CountRow;
 
     const rows = this.db

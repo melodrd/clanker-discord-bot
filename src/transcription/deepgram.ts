@@ -36,7 +36,9 @@ function numberOrNull(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-export async function transcribeOggFile(filePath: string): Promise<DeepgramTranscription> {
+export async function transcribeOggFile(
+  filePath: string,
+): Promise<DeepgramTranscription> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), env.DEEPGRAM_TIMEOUT_MS);
 
@@ -54,7 +56,9 @@ export async function transcribeOggFile(filePath: string): Promise<DeepgramTrans
 
     if (!response.ok) {
       const responseBody = await response.text().catch(() => "");
-      throw new Error(`Deepgram request failed (${response.status}): ${responseBody.slice(0, 500)}`);
+      throw new Error(
+        `Deepgram request failed (${response.status}): ${responseBody.slice(0, 500)}`,
+      );
     }
 
     const rawResponse = (await response.json()) as DeepgramResponse;
@@ -69,12 +73,15 @@ export async function transcribeOggFile(filePath: string): Promise<DeepgramTrans
         response.headers.get("request-id") ??
         stringOrNull(rawResponse.metadata?.request_id),
       detectedLanguage:
-        stringOrNull(firstChannel?.detected_language) ?? stringOrNull(rawResponse.results?.detected_language),
+        stringOrNull(firstChannel?.detected_language) ??
+        stringOrNull(rawResponse.results?.detected_language),
       rawResponse,
     };
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      throw new Error(`Deepgram request timed out after ${env.DEEPGRAM_TIMEOUT_MS} ms`);
+      throw new Error(
+        `Deepgram request timed out after ${env.DEEPGRAM_TIMEOUT_MS} ms`,
+      );
     }
 
     throw error;

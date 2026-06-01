@@ -1,4 +1,4 @@
-import { Events, MessageFlags } from "discord.js";
+import { EmbedBuilder, Events, MessageFlags } from "discord.js";
 import { env } from "./config/env.js";
 import { AppDatabase } from "./db/database.js";
 import { client } from "./discord/client.js";
@@ -35,10 +35,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isRepliable()) return;
 
     const content = "Command failed.";
+    const errorEmbed = new EmbedBuilder()
+      .setTitle("Error")
+      .setDescription(content)
+      .setColor(0x2ae7a8);
     if (interaction.deferred || interaction.replied) {
-      await interaction.editReply(content).catch(() => undefined);
+      await interaction
+        .editReply({ embeds: [errorEmbed] })
+        .catch(() => undefined);
     } else {
-      await interaction.reply({ content, flags: MessageFlags.Ephemeral }).catch(() => undefined);
+      await interaction
+        .reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral })
+        .catch(() => undefined);
     }
   }
 });
@@ -82,7 +90,10 @@ process.on("uncaughtException", (error) => {
 });
 
 try {
-  log.info("discord.login_requested", { clientId: env.DISCORD_CLIENT_ID, guildId: env.DISCORD_GUILD_ID });
+  log.info("discord.login_requested", {
+    clientId: env.DISCORD_CLIENT_ID,
+    guildId: env.DISCORD_GUILD_ID,
+  });
   await client.login(env.DISCORD_TOKEN);
 } catch (error) {
   log.error("app.start_failed", { error });

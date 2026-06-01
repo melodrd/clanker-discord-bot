@@ -1,27 +1,32 @@
-import {
-  EndBehaviorType,
-  VoiceConnectionStatus,
-  entersState,
-  joinVoiceChannel,
-} from "@discordjs/voice";
-import {
-  ChannelType,
-  type ChatInputCommandInteraction,
-  MessageFlags,
-  PermissionsBitField,
-} from "discord.js";
 import { createWriteStream } from "node:fs";
 import { mkdir, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join, posix } from "node:path";
 import type { Readable, Transform } from "node:stream";
+import {
+  EndBehaviorType,
+  entersState,
+  joinVoiceChannel,
+  VoiceConnectionStatus,
+} from "@discordjs/voice";
+import {
+  ChannelType,
+  type ChatInputCommandInteraction,
+  EmbedBuilder,
+  MessageFlags,
+  PermissionsBitField,
+} from "discord.js";
 import { env } from "../config/env.js";
-import { type AppDatabase } from "../db/database.js";
+import type { AppDatabase, SessionStats } from "../db/database.js";
 import { transcribeOggFile } from "../transcription/deepgram.js";
 import { createId, createSessionId } from "../utils/ids.js";
 import { log } from "../utils/log.js";
 import { nowIso, relativeMs } from "../utils/time.js";
-import type { ActiveRecordingSession, ActiveSegment, SavedSegment } from "./types.js";
+import type {
+  ActiveRecordingSession,
+  ActiveSegment,
+  SavedSegment,
+} from "./types.js";
 
 const require = createRequire(import.meta.url);
 const prism = require("prism-media") as {
@@ -33,6 +38,14 @@ const prism = require("prism-media") as {
 
 const unauthorizedMessage = "You are not allowed to use recording commands.";
 const segmentFinalizeTimeoutMs = 5_000;
+const defaultEmbedColor = 0x2ae7a8;
+
+type StopSource = "manual" | "max_duration" | "idle_timeout";
+
+type StopSummary = {
+  completedAt: string;
+  stats: SessionStats;
+};
 
 class UserFacingError extends Error {
   constructor(message: string) {
@@ -103,7 +116,10 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function waitForTaskSetToDrain(tasks: Set<Promise<void>>, timeoutMs?: number): Promise<boolean> {
+async function waitForTaskSetToDrain(
+  tasks: Set<Promise<void>>,
+  timeoutMs?: number,
+): Promise<boolean> {
   const startedAt = Date.now();
 
   while (tasks.size > 0) {
@@ -117,7 +133,10 @@ async function waitForTaskSetToDrain(tasks: Set<Promise<void>>, timeoutMs?: numb
     const remainingMs = timeoutMs - (Date.now() - startedAt);
     if (remainingMs <= 0) return false;
 
-    const drained = await Promise.race([snapshot, sleep(remainingMs).then(() => false)]);
+    const drained = await Promise.race([
+      snapshot,
+      sleep(remainingMs).then(() => false),
+    ]);
     if (!drained) return false;
   }
 
@@ -132,21 +151,54 @@ function safeJsonStringify(value: unknown): string {
   }
 }
 
+function formatUtcDisplay(iso: string): string {
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return `${iso} UTC`;
+  return parsed.toISOString().replace("T", " ").replace(".000Z", " UTC");
+}
+
+function formatDuration(ms: number): string {
+  const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
 export class Recorder {
   private readonly activeSessions = new Map<string, ActiveRecordingSession>();
 
   constructor(private readonly db: AppDatabase) {}
 
-  async handleInteraction(interaction: ChatInputCommandInteraction): Promise<void> {
+  private createEmbed(title: string, description?: string): EmbedBuilder {
+    const embed = new EmbedBuilder()
+      .setTitle(title)
+      .setColor(defaultEmbedColor);
+    if (description) embed.setDescription(description);
+    return embed;
+  }
+
+  async handleInteraction(
+    interaction: ChatInputCommandInteraction,
+  ): Promise<void> {
     if (interaction.commandName === "ping") {
-      await interaction.reply("Pong.");
+      await interaction.reply({ embeds: [this.createEmbed("Pong")] });
       return;
     }
 
     if (interaction.commandName !== "record") return;
 
     const subcommand = interaction.options.getSubcommand();
-    if (!(await this.authorizeRecordingInteraction(interaction, `/record ${subcommand}`))) return;
+    if (
+      !(await this.authorizeRecordingInteraction(
+        interaction,
+        `/record ${subcommand}`,
+      ))
+    )
+      return;
 
     if (subcommand === "start") {
       await this.startRecording(interaction);
@@ -162,6 +214,7 @@ export class Recorder {
 
     for (const session of this.activeSessions.values()) {
       session.stopping = true;
+      this.clearSessionTimers(session);
       this.cancelActiveSegments(session, reason);
 
       try {
@@ -171,13 +224,19 @@ export class Recorder {
           error: reason,
         });
       } catch (error) {
-        log.error("recording.shutdown_db_failed", { sessionId: session.sessionId, error });
+        log.error("recording.shutdown_db_failed", {
+          sessionId: session.sessionId,
+          error,
+        });
       }
 
       try {
         session.connection.destroy();
       } catch (error) {
-        log.error("voice.connection_destroy_failed", { sessionId: session.sessionId, error });
+        log.error("voice.connection_destroy_failed", {
+          sessionId: session.sessionId,
+          error,
+        });
       }
     }
 
@@ -197,7 +256,10 @@ export class Recorder {
       commandName,
     });
 
-    await interaction.reply({ content: unauthorizedMessage, flags: MessageFlags.Ephemeral });
+    await interaction.reply({
+      embeds: [this.createEmbed("Unauthorized", unauthorizedMessage)],
+      flags: MessageFlags.Ephemeral,
+    });
     return false;
   }
 
@@ -209,7 +271,93 @@ export class Recorder {
     return null;
   }
 
-  private async startRecording(interaction: ChatInputCommandInteraction): Promise<void> {
+  private clearSessionTimers(session: ActiveRecordingSession): void {
+    if (session.maxDurationTimer) clearTimeout(session.maxDurationTimer);
+    if (session.idleStopTimer) clearTimeout(session.idleStopTimer);
+
+    session.maxDurationTimer = undefined;
+    session.idleStopTimer = undefined;
+    session.maxDurationStopAt = null;
+    session.idleStopAt = null;
+  }
+
+  private clearIdleStop(session: ActiveRecordingSession): void {
+    if (session.idleStopTimer) clearTimeout(session.idleStopTimer);
+    session.idleStopTimer = undefined;
+    session.idleStopAt = null;
+  }
+
+  private scheduleMaxDurationStop(session: ActiveRecordingSession): void {
+    if (env.RECORDING_MAX_DURATION_MS <= 0) return;
+
+    session.maxDurationStopAt = Date.now() + env.RECORDING_MAX_DURATION_MS;
+    session.maxDurationTimer = setTimeout(() => {
+      void this.autoStopRecording(
+        session.sessionId,
+        "max_duration",
+        `Maximum recording duration reached (${formatDuration(env.RECORDING_MAX_DURATION_MS)})`,
+      );
+    }, env.RECORDING_MAX_DURATION_MS);
+    session.maxDurationTimer.unref();
+  }
+
+  private scheduleIdleStop(session: ActiveRecordingSession): void {
+    this.clearIdleStop(session);
+
+    if (
+      env.RECORDING_IDLE_STOP_MS <= 0 ||
+      session.stopping ||
+      session.activeUserStreams.size > 0 ||
+      session.startingUserIds.size > 0
+    ) {
+      return;
+    }
+
+    session.idleStopAt = Date.now() + env.RECORDING_IDLE_STOP_MS;
+    session.idleStopTimer = setTimeout(() => {
+      void this.autoStopRecording(
+        session.sessionId,
+        "idle_timeout",
+        `No active speakers for ${formatDuration(env.RECORDING_IDLE_STOP_MS)}`,
+      );
+    }, env.RECORDING_IDLE_STOP_MS);
+    session.idleStopTimer.unref();
+  }
+
+  private async autoStopRecording(
+    sessionId: string,
+    source: Exclude<StopSource, "manual">,
+    reason: string,
+  ): Promise<void> {
+    const session = this.activeSessions.get(sessionId);
+    if (!session) return;
+
+    log.warn("recording.auto_stop_requested", {
+      sessionId: session.sessionId,
+      guildId: session.guildId,
+      channelId: session.channelId,
+      source,
+      reason,
+    });
+
+    try {
+      const summary = await this.stopSession(session, source, reason);
+      await this.notifyAutoStop(session, source, reason, summary);
+    } catch (error) {
+      log.error("recording.auto_stop_failed", {
+        sessionId: session.sessionId,
+        guildId: session.guildId,
+        channelId: session.channelId,
+        source,
+        reason,
+        error,
+      });
+    }
+  }
+
+  private async startRecording(
+    interaction: ChatInputCommandInteraction,
+  ): Promise<void> {
     log.info("recording.start_requested", {
       discordUserId: interaction.user.id,
       guildId: interaction.guildId,
@@ -221,31 +369,43 @@ export class Recorder {
 
     try {
       if (!interaction.inGuild() || interaction.guildId === null) {
-        throw new UserFacingError("Recording commands can only be used inside a server.");
+        throw new UserFacingError(
+          "Recording commands can only be used inside a server.",
+        );
       }
 
       const existingSession = this.getActiveSession();
       if (existingSession) {
-        throw new UserFacingError(`A recording is already active. Session ID: ${existingSession.sessionId}`);
+        throw new UserFacingError(
+          `A recording is already active. Session ID: ${existingSession.sessionId}`,
+        );
       }
 
-      const guild = interaction.guild ?? (await interaction.client.guilds.fetch(interaction.guildId));
+      const guild =
+        interaction.guild ??
+        (await interaction.client.guilds.fetch(interaction.guildId));
       const member = await guild.members.fetch(interaction.user.id);
       const channel = member.voice.channel;
 
       if (!channel || channel.type !== ChannelType.GuildStageVoice) {
-        throw new UserFacingError("You must be in a Discord Stage channel to start recording.");
+        throw new UserFacingError(
+          "You must be in a Discord Stage channel to start recording.",
+        );
       }
 
       const botMember = guild.members.me ?? (await guild.members.fetchMe());
       const permissions = channel.permissionsFor(botMember);
 
       if (!permissions?.has(PermissionsBitField.Flags.ViewChannel)) {
-        throw new UserFacingError("I need View Channel permission for that Stage channel.");
+        throw new UserFacingError(
+          "I need View Channel permission for that Stage channel.",
+        );
       }
 
       if (!permissions.has(PermissionsBitField.Flags.Connect)) {
-        throw new UserFacingError("I need Connect permission for that Stage channel.");
+        throw new UserFacingError(
+          "I need Connect permission for that Stage channel.",
+        );
       }
 
       const startedAtDate = new Date();
@@ -261,7 +421,12 @@ export class Recorder {
       });
 
       connection.on("error", (error) => {
-        log.error("voice.connection_error", { sessionId, guildId: guild.id, channelId: channel.id, error });
+        log.error("voice.connection_error", {
+          sessionId,
+          guildId: guild.id,
+          channelId: channel.id,
+          error,
+        });
       });
 
       await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
@@ -278,6 +443,7 @@ export class Recorder {
         sessionId,
         guildId: guild.id,
         channelId: channel.id,
+        startedByDiscordUserId: interaction.user.id,
         startedAt,
         guild,
         connection,
@@ -286,10 +452,14 @@ export class Recorder {
         segmentTasks: new Set(),
         transcriptionTasks: new Set(),
         cancelledSegmentIds: new Set(),
+        maxDurationStopAt: null,
+        idleStopAt: null,
         stopping: false,
       };
 
       this.activeSessions.set(sessionId, session);
+      this.scheduleMaxDurationStop(session);
+      this.scheduleIdleStop(session);
       this.listenForSpeakers(session);
 
       log.info("recording.started", {
@@ -299,13 +469,14 @@ export class Recorder {
         startedBy: interaction.user.id,
       });
 
-      await interaction.editReply(
-        [
-          "Recording started.",
-          `Session ID: ${sessionId}`,
-          `Channel: <#${channel.id}>`,
-        ].join("\n"),
-      );
+      await interaction.editReply({
+        embeds: [
+          this.createEmbed("Recording Started").addFields(
+            { name: "Session ID", value: sessionId, inline: true },
+            { name: "Channel", value: `<#${channel.id}>`, inline: true },
+          ),
+        ],
+      });
     } catch (error) {
       if (connection) {
         try {
@@ -321,8 +492,13 @@ export class Recorder {
         error,
       });
 
-      const message = error instanceof UserFacingError ? error.message : "Failed to start recording.";
-      await interaction.editReply(message);
+      const message =
+        error instanceof UserFacingError
+          ? error.message
+          : "Failed to start recording.";
+      await interaction.editReply({
+        embeds: [this.createEmbed("Error", message)],
+      });
     }
   }
 
@@ -332,10 +508,16 @@ export class Recorder {
     });
   }
 
-  private async handleSpeakerStart(session: ActiveRecordingSession, discordUserId: string): Promise<void> {
+  private async handleSpeakerStart(
+    session: ActiveRecordingSession,
+    discordUserId: string,
+  ): Promise<void> {
     if (session.stopping) return;
 
-    if (session.activeUserStreams.has(discordUserId) || session.startingUserIds.has(discordUserId)) {
+    if (
+      session.activeUserStreams.has(discordUserId) ||
+      session.startingUserIds.has(discordUserId)
+    ) {
       log.info("segment.duplicate_start_ignored", {
         sessionId: session.sessionId,
         guildId: session.guildId,
@@ -346,6 +528,7 @@ export class Recorder {
     }
 
     session.startingUserIds.add(discordUserId);
+    this.clearIdleStop(session);
 
     let segmentId: string | null = null;
 
@@ -362,8 +545,17 @@ export class Recorder {
       const startedAt = startedAtDate.toISOString();
       const relativeStartMs = relativeMs(session.startedAt, startedAtDate);
       segmentId = createId();
-      const relativePath = posix.join(session.sessionId, discordUserId, `${segmentId}.ogg`);
-      const absolutePath = join(env.RECORDINGS_DIR, session.sessionId, discordUserId, `${segmentId}.ogg`);
+      const relativePath = posix.join(
+        session.sessionId,
+        discordUserId,
+        `${segmentId}.ogg`,
+      );
+      const absolutePath = join(
+        env.RECORDINGS_DIR,
+        session.sessionId,
+        discordUserId,
+        `${segmentId}.ogg`,
+      );
 
       await mkdir(dirname(absolutePath), { recursive: true });
 
@@ -377,12 +569,15 @@ export class Recorder {
         localFilePath: relativePath,
       });
 
-      const receiveStream = session.connection.receiver.subscribe(discordUserId, {
-        end: {
-          behavior: EndBehaviorType.AfterSilence,
-          duration: 1_000,
+      const receiveStream = session.connection.receiver.subscribe(
+        discordUserId,
+        {
+          end: {
+            behavior: EndBehaviorType.AfterSilence,
+            duration: 1_000,
+          },
         },
-      });
+      );
       const oggStream = createOggStream();
       const outputStream = createWriteStream(absolutePath);
       const activeSegment: ActiveSegment = {
@@ -417,7 +612,13 @@ export class Recorder {
         localFilePath: relativePath,
       });
 
-      const task = this.finalizeSegment(session, activeSegment, receiveStream, oggStream, outputStream);
+      const task = this.finalizeSegment(
+        session,
+        activeSegment,
+        receiveStream,
+        oggStream,
+        outputStream,
+      );
       session.segmentTasks.add(task);
       void task.finally(() => session.segmentTasks.delete(task));
 
@@ -439,6 +640,7 @@ export class Recorder {
       });
     } finally {
       session.startingUserIds.delete(discordUserId);
+      this.scheduleIdleStop(session);
     }
   }
 
@@ -446,7 +648,9 @@ export class Recorder {
     session: ActiveRecordingSession,
     discordUserId: string,
   ): Promise<{ displayName: string | null; username: string | null }> {
-    const member = await session.guild.members.fetch(discordUserId).catch(() => null);
+    const member = await session.guild.members
+      .fetch(discordUserId)
+      .catch(() => null);
     if (member) {
       return {
         displayName: member.displayName,
@@ -454,7 +658,9 @@ export class Recorder {
       };
     }
 
-    const user = await session.guild.client.users.fetch(discordUserId).catch(() => null);
+    const user = await session.guild.client.users
+      .fetch(discordUserId)
+      .catch(() => null);
     return {
       displayName: user?.globalName ?? user?.username ?? null,
       username: user?.username ?? null,
@@ -480,7 +686,10 @@ export class Recorder {
       const relativeEndMs = relativeMs(session.startedAt, endedAtDate);
 
       if (sizeBytes <= 0) {
-        this.db.markAudioSegmentFailed(segment.segmentId, "Empty audio segment");
+        this.db.markAudioSegmentFailed(
+          segment.segmentId,
+          "Empty audio segment",
+        );
         log.warn("segment.empty", {
           sessionId: session.sessionId,
           guildId: session.guildId,
@@ -542,16 +751,23 @@ export class Recorder {
       }
     } finally {
       session.activeUserStreams.delete(segment.discordUserId);
+      this.scheduleIdleStop(session);
     }
   }
 
-  private scheduleTranscription(session: ActiveRecordingSession, segment: SavedSegment): void {
+  private scheduleTranscription(
+    session: ActiveRecordingSession,
+    segment: SavedSegment,
+  ): void {
     const task = this.transcribeSegment(session, segment);
     session.transcriptionTasks.add(task);
     void task.finally(() => session.transcriptionTasks.delete(task));
   }
 
-  private async transcribeSegment(session: ActiveRecordingSession, segment: SavedSegment): Promise<void> {
+  private async transcribeSegment(
+    session: ActiveRecordingSession,
+    segment: SavedSegment,
+  ): Promise<void> {
     log.info("transcription.requested", {
       sessionId: session.sessionId,
       guildId: session.guildId,
@@ -607,36 +823,101 @@ export class Recorder {
     }
   }
 
-  private async showStatus(interaction: ChatInputCommandInteraction): Promise<void> {
+  private async showStatus(
+    interaction: ChatInputCommandInteraction,
+  ): Promise<void> {
     const session = this.getActiveSession();
     if (!session) {
-      await interaction.reply({ content: "Recording status: idle.", flags: MessageFlags.Ephemeral });
+      const idleEmbed = new EmbedBuilder()
+        .setTitle("Recording Status")
+        .setDescription("Recording is currently idle.")
+        .setColor(defaultEmbedColor);
+
+      await interaction.reply({
+        embeds: [idleEmbed],
+        flags: MessageFlags.Ephemeral,
+      });
       return;
     }
 
     const stats = this.db.getSessionStats(session.sessionId);
+    const now = Date.now();
+    const maxDurationStatus = session.maxDurationStopAt
+      ? `in ${formatDuration(session.maxDurationStopAt - now)}`
+      : "Disabled";
+    const idleStatus =
+      env.RECORDING_IDLE_STOP_MS <= 0
+        ? "Disabled"
+        : session.idleStopAt
+          ? `in ${formatDuration(session.idleStopAt - now)}`
+          : "Waiting for silence";
+
+    const statusEmbed = new EmbedBuilder()
+      .setTitle("Recording Status")
+      .setDescription("Recording is active.")
+      .setColor(defaultEmbedColor)
+      .addFields(
+        { name: "Channel", value: `<#${session.channelId}>`, inline: true },
+        { name: "Session ID", value: session.sessionId, inline: true },
+        {
+          name: "Voice Status",
+          value: String(session.connection.state.status),
+          inline: true,
+        },
+        {
+          name: "Elapsed",
+          value: formatDuration(relativeMs(session.startedAt)),
+          inline: true,
+        },
+        { name: "Max Auto-Stop", value: maxDurationStatus, inline: true },
+        { name: "Idle Auto-Stop", value: idleStatus, inline: true },
+        {
+          name: "Participants",
+          value: String(stats.participantsCount),
+          inline: true,
+        },
+        {
+          name: "Audio Segments",
+          value: String(stats.audioSegmentsCount),
+          inline: true,
+        },
+        {
+          name: "Transcribed",
+          value: String(stats.transcribedSegmentsCount),
+          inline: true,
+        },
+        {
+          name: "Failed",
+          value: String(stats.failedSegmentsCount),
+          inline: true,
+        },
+        {
+          name: "Transcribing",
+          value: String(stats.transcribingSegmentsCount),
+          inline: true,
+        },
+        {
+          name: "Active Speaker Streams",
+          value: String(session.activeUserStreams.size),
+          inline: true,
+        },
+      );
 
     await interaction.reply({
       flags: MessageFlags.Ephemeral,
-      content: [
-        "Recording status: active.",
-        `Channel: <#${session.channelId}>`,
-        `Session ID: ${session.sessionId}`,
-        `Participants: ${stats.participantsCount}`,
-        `Audio segments: ${stats.audioSegmentsCount}`,
-        `Transcribed segments: ${stats.transcribedSegmentsCount}`,
-        `Failed segments: ${stats.failedSegmentsCount}`,
-        `Transcribing segments: ${stats.transcribingSegmentsCount}`,
-        `Active speaker streams: ${session.activeUserStreams.size}`,
-        `Voice connection status: ${session.connection.state.status}`,
-      ].join("\n"),
+      embeds: [statusEmbed],
     });
   }
 
-  private async stopRecording(interaction: ChatInputCommandInteraction): Promise<void> {
+  private async stopRecording(
+    interaction: ChatInputCommandInteraction,
+  ): Promise<void> {
     const session = this.getActiveSession();
     if (!session) {
-      await interaction.reply({ content: "No active recording session.", flags: MessageFlags.Ephemeral });
+      await interaction.reply({
+        embeds: [this.createEmbed("Recording", "No active recording session.")],
+        flags: MessageFlags.Ephemeral,
+      });
       return;
     }
 
@@ -650,52 +931,121 @@ export class Recorder {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     try {
+      const summary = await this.stopSession(
+        session,
+        "manual",
+        `Stopped by ${interaction.user.id}`,
+      );
+      await interaction.editReply({
+        embeds: [this.createCompletedEmbed(session, summary)],
+      });
+    } catch (_error) {
+      await interaction.editReply({
+        embeds: [
+          this.createEmbed("Error", "Failed to stop recording cleanly."),
+        ],
+      });
+    }
+  }
+
+  private createCompletedEmbed(
+    session: ActiveRecordingSession,
+    summary: StopSummary,
+    title = "Recording Completed",
+    description?: string,
+  ): EmbedBuilder {
+    const embed = new EmbedBuilder()
+      .setTitle(title)
+      .setColor(defaultEmbedColor)
+      .addFields(
+        {
+          name: "Start Date",
+          value: formatUtcDisplay(session.startedAt),
+          inline: true,
+        },
+        {
+          name: "End Date",
+          value: formatUtcDisplay(summary.completedAt),
+          inline: true,
+        },
+        {
+          name: "Participants",
+          value: String(summary.stats.participantsCount),
+          inline: true,
+        },
+      );
+
+    if (description) embed.setDescription(description);
+    return embed;
+  }
+
+  private async stopSession(
+    session: ActiveRecordingSession,
+    source: StopSource,
+    reason: string,
+  ): Promise<StopSummary> {
+    try {
       const stoppedAt = nowIso();
       session.stopping = true;
-      this.db.updateRecordingSessionStatus(session.sessionId, "stopping", { stoppedAt });
+      this.clearSessionTimers(session);
+      this.db.updateRecordingSessionStatus(session.sessionId, "stopping", {
+        stoppedAt,
+      });
 
-      session.connection.destroy();
+      try {
+        session.connection.destroy();
+      } catch (error) {
+        log.error("voice.connection_destroy_failed", {
+          sessionId: session.sessionId,
+          error,
+        });
+      }
+
       this.activeSessions.delete(session.sessionId);
 
       log.info("recording.stopped", {
         sessionId: session.sessionId,
         guildId: session.guildId,
         channelId: session.channelId,
+        source,
+        reason,
       });
 
-      const segmentsFinalized = await waitForTaskSetToDrain(session.segmentTasks, segmentFinalizeTimeoutMs);
+      const segmentsFinalized = await waitForTaskSetToDrain(
+        session.segmentTasks,
+        segmentFinalizeTimeoutMs,
+      );
       if (!segmentsFinalized) {
-        this.cancelActiveSegments(session, "Recording stopped before segment finalized");
+        this.cancelActiveSegments(
+          session,
+          "Recording stopped before segment finalized",
+        );
       }
 
       this.db.updateRecordingSessionStatus(session.sessionId, "transcribing");
       await waitForTaskSetToDrain(session.transcriptionTasks);
 
       const completedAt = nowIso();
-      this.db.updateRecordingSessionStatus(session.sessionId, "completed", { completedAt });
+      this.db.updateRecordingSessionStatus(session.sessionId, "completed", {
+        completedAt,
+      });
       const stats = this.db.getSessionStats(session.sessionId);
 
       log.info("session.completed", {
         sessionId: session.sessionId,
         guildId: session.guildId,
         channelId: session.channelId,
+        source,
         participantsCount: stats.participantsCount,
         audioSegmentsCount: stats.audioSegmentsCount,
         transcribedSegmentsCount: stats.transcribedSegmentsCount,
         failedSegmentsCount: stats.failedSegmentsCount,
       });
 
-      await interaction.editReply(
-        [
-          "Recording completed.",
-          `Session ID: ${session.sessionId}`,
-          `Participants: ${stats.participantsCount}`,
-          `Audio segments: ${stats.audioSegmentsCount}`,
-          `Transcribed segments: ${stats.transcribedSegmentsCount}`,
-          `Failed segments: ${stats.failedSegmentsCount}`,
-        ].join("\n"),
-      );
+      return { completedAt, stats };
     } catch (error) {
+      this.clearSessionTimers(session);
+      this.activeSessions.delete(session.sessionId);
       this.db.updateRecordingSessionStatus(session.sessionId, "failed", {
         completedAt: nowIso(),
         error: errorMessage(error),
@@ -705,15 +1055,51 @@ export class Recorder {
         sessionId: session.sessionId,
         guildId: session.guildId,
         channelId: session.channelId,
+        source,
+        reason,
         error,
       });
 
-      await interaction.editReply("Failed to stop recording cleanly.");
+      throw error;
     }
   }
 
-  private cancelActiveSegments(session: ActiveRecordingSession, reason: string): void {
-    for (const [discordUserId, segment] of session.activeUserStreams.entries()) {
+  private async notifyAutoStop(
+    session: ActiveRecordingSession,
+    source: Exclude<StopSource, "manual">,
+    reason: string,
+    summary: StopSummary,
+  ): Promise<void> {
+    const title =
+      source === "max_duration"
+        ? "Recording Auto-Stopped: Max Duration"
+        : "Recording Auto-Stopped: Idle Timeout";
+    const embed = this.createCompletedEmbed(session, summary, title, reason);
+
+    try {
+      const user = await session.guild.client.users.fetch(
+        session.startedByDiscordUserId,
+      );
+      await user.send({ embeds: [embed] });
+    } catch (error) {
+      log.warn("recording.auto_stop_notify_failed", {
+        sessionId: session.sessionId,
+        guildId: session.guildId,
+        channelId: session.channelId,
+        startedByDiscordUserId: session.startedByDiscordUserId,
+        error,
+      });
+    }
+  }
+
+  private cancelActiveSegments(
+    session: ActiveRecordingSession,
+    reason: string,
+  ): void {
+    for (const [
+      discordUserId,
+      segment,
+    ] of session.activeUserStreams.entries()) {
       session.cancelledSegmentIds.add(segment.segmentId);
 
       try {

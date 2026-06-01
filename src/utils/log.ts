@@ -26,12 +26,19 @@ function redactValue(key: string, value: unknown): unknown {
 function stringifyValue(value: unknown): string {
   if (value === null) return "null";
   if (value === undefined) return "undefined";
-  if (typeof value === "string") return /\s/.test(value) ? JSON.stringify(value) : value;
-  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+  if (typeof value === "string")
+    return /\s/.test(value) ? JSON.stringify(value) : value;
+  if (
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    typeof value === "bigint"
+  ) {
     return String(value);
   }
 
-  return JSON.stringify(value, (key, nestedValue) => redactValue(key, nestedValue));
+  return JSON.stringify(value, (key, nestedValue) =>
+    redactValue(key, nestedValue),
+  );
 }
 
 function flattenMeta(meta: LogMeta): LogMeta {
@@ -39,7 +46,12 @@ function flattenMeta(meta: LogMeta): LogMeta {
 
   for (const [key, value] of Object.entries(meta)) {
     const redacted = redactValue(key, value);
-    if (redacted && typeof redacted === "object" && !Array.isArray(redacted) && value instanceof Error) {
+    if (
+      redacted &&
+      typeof redacted === "object" &&
+      !Array.isArray(redacted) &&
+      value instanceof Error
+    ) {
       Object.assign(flat, redacted);
     } else {
       flat[key] = redacted;
@@ -51,7 +63,9 @@ function flattenMeta(meta: LogMeta): LogMeta {
 
 function write(level: LogLevel, event: string, meta: LogMeta = {}): void {
   const timestamp = new Date().toISOString();
-  const parts = Object.entries(flattenMeta(meta)).map(([key, value]) => `${key}=${stringifyValue(value)}`);
+  const parts = Object.entries(flattenMeta(meta)).map(
+    ([key, value]) => `${key}=${stringifyValue(value)}`,
+  );
   const line = [timestamp, level.toUpperCase(), event, ...parts].join(" ");
 
   if (level === "error") {
