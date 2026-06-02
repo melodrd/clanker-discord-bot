@@ -6,6 +6,7 @@ import {
 import {
   ChannelType,
   type ChatInputCommandInteraction,
+  type EmbedBuilder,
   PermissionsBitField,
 } from "discord.js";
 import { env } from "../config/env.js";
@@ -264,9 +265,20 @@ export class RecordingSessionManager {
       session.sessionId,
       "stage_ended",
       "The active Stage was ended",
-      false,
     );
     return true;
+  }
+
+  async sendSessionEmbed(
+    session: ActiveRecordingSession,
+    embed: EmbedBuilder,
+  ): Promise<void> {
+    const channel = await session.guild.channels.fetch(session.channelId);
+    if (!channel?.isSendable()) {
+      throw new Error("Stage channel is not sendable");
+    }
+
+    await channel.send({ embeds: [embed] });
   }
 
   async shutdown(reason: string): Promise<void> {
@@ -503,10 +515,7 @@ export class RecordingSessionManager {
     const embed = createCompletedEmbed(session, summary, title, reason);
 
     try {
-      const user = await session.guild.client.users.fetch(
-        session.startedByDiscordUserId,
-      );
-      await user.send({ embeds: [embed] });
+      await this.sendSessionEmbed(session, embed);
     } catch (error) {
       log.warn("recording.auto_stop_notify_failed", {
         sessionId: session.sessionId,

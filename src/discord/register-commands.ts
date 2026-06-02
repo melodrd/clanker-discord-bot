@@ -1,7 +1,9 @@
 import { REST, Routes } from "discord.js";
-import { env } from "../config/env.js";
+import { env, validateBotEnv } from "../config/env.js";
 import { log } from "../utils/log.js";
 import { commandJson } from "./commands.js";
+
+validateBotEnv();
 
 const rest = new REST({ version: "10" }).setToken(env.DISCORD_TOKEN);
 

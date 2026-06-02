@@ -52,11 +52,18 @@ Start in dev mode:
 npm run dev
 ```
 
+Start the read-only API in dev mode:
+
+```bash
+npm run api:dev
+```
+
 Build + run production:
 
 ```bash
 npm run build
 npm start
+npm run api:start
 ```
 
 ## Slash commands
@@ -65,6 +72,17 @@ npm start
 - `/record start`
 - `/record stop`
 - `/record status`
+
+## API
+
+The API reads the same SQLite database as the bot. By default it listens at `http://localhost:3001`; override with `API_HOST`, `API_PORT`, or `DATABASE_PATH`.
+
+Endpoints:
+
+- `GET /api/health`
+- `GET /api/meetings`
+- `GET /api/meetings/:meetingId`
+- `GET /api/meetings/:meetingId/transcript`
 
 ## Data
 
@@ -78,7 +96,7 @@ Keep these folders private: they contain sensitive recordings/transcripts.
 Use Docker if you want a containerized runtime with persisted local data.
 
 1. Make sure `.env` is filled in. `compose.yml` reads it directly.
-2. Start the bot:
+2. Start the bot and API:
 
 ```bash
 docker compose up -d --build
@@ -96,10 +114,10 @@ docker compose logs -f
 docker compose down
 ```
 
-The compose file mounts `./data` and `./recordings` into the container, so SQLite data and audio files stay on the host.
+The compose file mounts `./data` and `./recordings` into the bot container, so SQLite data and audio files stay on the host. The API container mounts `./data` read-only.
 
 ## Notes
 
 - Recording controls are limited to `ALLOWED_DISCORD_USER_IDS`.
 - Recordings auto-stop when the active Stage is ended, after `RECORDING_MAX_DURATION_MS`, or after `RECORDING_IDLE_STOP_MS` with no active speakers. Set either duration value to `0` to disable that guard.
-- Duration and idle auto-stops DM the user who started the recording when completion finishes.
+- Recording start, manual stop, and auto-stop completion messages post in the Stage chat.

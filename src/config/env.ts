@@ -5,7 +5,7 @@ config();
 
 const maxTimerDelayMs = 2_147_483_647;
 
-const requiredEnvVars = [
+const botRequiredEnvVars = [
   "DISCORD_TOKEN",
   "DISCORD_CLIENT_ID",
   "DISCORD_GUILD_ID",
@@ -13,7 +13,7 @@ const requiredEnvVars = [
   "ALLOWED_DISCORD_USER_IDS",
 ] as const;
 
-function requireEnv(name: (typeof requiredEnvVars)[number]): string {
+function requireBotEnv(name: (typeof botRequiredEnvVars)[number]): string {
   const value = process.env[name];
   const canBeEmpty = name === "ALLOWED_DISCORD_USER_IDS";
 
@@ -22,6 +22,11 @@ function requireEnv(name: (typeof requiredEnvVars)[number]): string {
   }
 
   return value;
+}
+
+function optionalString(name: string, fallback: string): string {
+  const value = process.env[name]?.trim();
+  return value ? value : fallback;
 }
 
 function parseAllowedUserIds(value: string): Set<string> {
@@ -49,28 +54,52 @@ function optionalNonNegativeInteger(name: string, fallback: number): number {
   return parsed;
 }
 
-for (const name of requiredEnvVars) {
-  requireEnv(name);
+function optionalPort(name: string, fallback: number): number {
+  const value = process.env[name]?.trim();
+  if (!value) return fallback;
+
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) {
+    throw new Error(`${name} must be an integer`);
+  }
+
+  if (parsed < 1 || parsed > 65_535) {
+    throw new Error(`${name} must be between 1 and 65535`);
+  }
+
+  return parsed;
 }
 
 const allowedDiscordUserIds = parseAllowedUserIds(
   process.env.ALLOWED_DISCORD_USER_IDS ?? "",
 );
 
-if (allowedDiscordUserIds.size === 0) {
-  log.warn("auth.allowlist.empty", {
-    message: "No Discord users are authorized to control recording",
+export function validateBotEnv(): void {
+  for (const name of botRequiredEnvVars) {
+    requireBotEnv(name);
+  }
+
+  if (allowedDiscordUserIds.size === 0) {
+    log.warn("auth.allowlist.empty", {
+      message: "No Discord users are authorized to control recording",
+    });
+  }
+
+  log.info("env.validated", {
+    allowedDiscordUserCount: allowedDiscordUserIds.size,
   });
 }
 
 export const env = {
-  DISCORD_TOKEN: requireEnv("DISCORD_TOKEN"),
-  DISCORD_CLIENT_ID: requireEnv("DISCORD_CLIENT_ID"),
-  DISCORD_GUILD_ID: requireEnv("DISCORD_GUILD_ID"),
-  DEEPGRAM_API: requireEnv("DEEPGRAM_API"),
+  DISCORD_TOKEN: process.env.DISCORD_TOKEN ?? "",
+  DISCORD_CLIENT_ID: process.env.DISCORD_CLIENT_ID ?? "",
+  DISCORD_GUILD_ID: process.env.DISCORD_GUILD_ID ?? "",
+  DEEPGRAM_API: process.env.DEEPGRAM_API ?? "",
   ALLOWED_DISCORD_USER_IDS: allowedDiscordUserIds,
-  DATABASE_PATH: "./data/lituus.sqlite",
+  DATABASE_PATH: process.env.DATABASE_PATH ?? "./data/lituus.sqlite",
   RECORDINGS_DIR: "./recordings",
+  API_HOST: optionalString("API_HOST", "0.0.0.0"),
+  API_PORT: optionalPort("API_PORT", 3001),
   RECORDING_MAX_DURATION_MS: optionalNonNegativeInteger(
     "RECORDING_MAX_DURATION_MS",
     4 * 60 * 60 * 1000,
@@ -83,7 +112,3 @@ export const env = {
   DEEPGRAM_MODEL: "nova-3",
   DEEPGRAM_TIMEOUT_MS: 60_000,
 } as const;
-
-log.info("env.validated", {
-  allowedDiscordUserCount: allowedDiscordUserIds.size,
-});

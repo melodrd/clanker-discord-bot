@@ -110,11 +110,11 @@ export class Recorder {
 
     try {
       const session = await this.sessions.startRecording(interaction);
-      await interaction.editReply({
-        embeds: [
-          createRecordingStartedEmbed(session.sessionId, session.channelId),
-        ],
-      });
+      await this.sessions.sendSessionEmbed(
+        session,
+        createRecordingStartedEmbed(session.sessionId, session.channelId),
+      );
+      await interaction.deleteReply();
     } catch (error) {
       log.error("recording.start_failed", {
         discordUserId: interaction.user.id,
@@ -176,9 +176,11 @@ export class Recorder {
         session,
         interaction.user.id,
       );
-      await interaction.editReply({
-        embeds: [createCompletedEmbed(session, summary)],
-      });
+      await this.sessions.sendSessionEmbed(
+        session,
+        createCompletedEmbed(session, summary),
+      );
+      await interaction.deleteReply();
     } catch (_error) {
       await interaction.editReply({
         embeds: [createErrorEmbed("Failed to stop recording cleanly.")],

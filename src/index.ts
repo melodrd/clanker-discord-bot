@@ -1,9 +1,11 @@
 import { EmbedBuilder, Events, MessageFlags } from "discord.js";
-import { env } from "./config/env.js";
+import { env, validateBotEnv } from "./config/env.js";
 import { AppDatabase } from "./db/database.js";
 import { client } from "./discord/client.js";
 import { Recorder } from "./recording/recorder.js";
 import { log } from "./utils/log.js";
+
+validateBotEnv();
 
 log.info("app.startup", { nodeVersion: process.version });
 
