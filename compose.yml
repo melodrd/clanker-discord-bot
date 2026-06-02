@@ -1,22 +1,10 @@
 services:
   bot:
     build: .
-    container_name: lituus-bot
+    container_name: lituus-discord-bot
     restart: unless-stopped
     env_file:
       - .env
     volumes:
       - ./data:/app/data
       - ./recordings:/app/recordings
-
-  api:
-    build: .
-    container_name: lituus-api
-    restart: unless-stopped
-    env_file:
-      - .env
-    ports:
-      - "3001:3001"
-    volumes:
-      - ./data:/app/data:ro
-    command: ["node", "dist/api/index.js"]

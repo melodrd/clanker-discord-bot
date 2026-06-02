@@ -1,4 +1,4 @@
-# lituus-bot
+# lituus-discord-bot
 
 Simple Discord Stage recorder bot.
 
@@ -34,8 +34,6 @@ DISCORD_CLIENT_ID=
 DISCORD_GUILD_ID=
 DEEPGRAM_API=
 ALLOWED_DISCORD_USER_IDS=123456789012345678,234567890123456789
-RECORDING_MAX_DURATION_MS=14400000
-RECORDING_IDLE_STOP_MS=900000
 ```
 
 ## Run
@@ -52,18 +50,11 @@ Start in dev mode:
 npm run dev
 ```
 
-Start the read-only API in dev mode:
-
-```bash
-npm run api:dev
-```
-
 Build + run production:
 
 ```bash
 npm run build
 npm start
-npm run api:start
 ```
 
 ## Slash commands
@@ -72,17 +63,6 @@ npm run api:start
 - `/record start`
 - `/record stop`
 - `/record status`
-
-## API
-
-The API reads the same SQLite database as the bot. By default it listens at `http://localhost:3001`; override with `API_HOST`, `API_PORT`, or `DATABASE_PATH`.
-
-Endpoints:
-
-- `GET /api/health`
-- `GET /api/meetings`
-- `GET /api/meetings/:meetingId`
-- `GET /api/meetings/:meetingId/transcript`
 
 ## Data
 
@@ -96,25 +76,43 @@ Keep these folders private: they contain sensitive recordings/transcripts.
 Use Docker if you want a containerized runtime with persisted local data.
 
 1. Make sure `.env` is filled in. `compose.yml` reads it directly.
-2. Start the bot and API:
+
+2. Register slash commands once:
+
+```bash
+docker build --target build -t lituus-discord-bot-command-runner .
+docker run --rm --env-file .env lituus-discord-bot-command-runner npm run commands:register
+```
+
+The command registration script uses `tsx` and source files from `src/`, so it runs from the Docker `build` stage instead of the final production image.
+
+3. Start the bot:
 
 ```bash
 docker compose up -d --build
 ```
 
-3. Follow logs:
+4. Follow logs:
 
 ```bash
 docker compose logs -f
 ```
 
-4. Stop it:
+5. Stop it:
 
 ```bash
 docker compose down
 ```
 
-The compose file mounts `./data` and `./recordings` into the bot container, so SQLite data and audio files stay on the host. The API container mounts `./data` read-only.
+The compose file mounts `./data` and `./recordings` into the bot container, so SQLite data and audio files stay on the host.
+
+Docker usually creates these host folders automatically when the bind mounts are first used, but you can create them explicitly with:
+
+```bash
+mkdir -p data recordings
+```
+
+If Docker prints a BuildKit/buildx warning, install or enable the Docker Buildx plugin. The bot can still build with the legacy builder for now, but Buildx is the supported path going forward.
 
 ## Notes
 

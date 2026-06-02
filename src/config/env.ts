@@ -24,11 +24,6 @@ function requireBotEnv(name: (typeof botRequiredEnvVars)[number]): string {
   return value;
 }
 
-function optionalString(name: string, fallback: string): string {
-  const value = process.env[name]?.trim();
-  return value ? value : fallback;
-}
-
 function parseAllowedUserIds(value: string): Set<string> {
   return new Set(
     value
@@ -49,22 +44,6 @@ function optionalNonNegativeInteger(name: string, fallback: number): number {
 
   if (parsed > maxTimerDelayMs) {
     throw new Error(`${name} must be less than or equal to ${maxTimerDelayMs}`);
-  }
-
-  return parsed;
-}
-
-function optionalPort(name: string, fallback: number): number {
-  const value = process.env[name]?.trim();
-  if (!value) return fallback;
-
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed)) {
-    throw new Error(`${name} must be an integer`);
-  }
-
-  if (parsed < 1 || parsed > 65_535) {
-    throw new Error(`${name} must be between 1 and 65535`);
   }
 
   return parsed;
@@ -98,8 +77,6 @@ export const env = {
   ALLOWED_DISCORD_USER_IDS: allowedDiscordUserIds,
   DATABASE_PATH: process.env.DATABASE_PATH ?? "./data/lituus.sqlite",
   RECORDINGS_DIR: "./recordings",
-  API_HOST: optionalString("API_HOST", "0.0.0.0"),
-  API_PORT: optionalPort("API_PORT", 3001),
   RECORDING_MAX_DURATION_MS: optionalNonNegativeInteger(
     "RECORDING_MAX_DURATION_MS",
     4 * 60 * 60 * 1000,
