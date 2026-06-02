@@ -38,7 +38,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const errorEmbed = new EmbedBuilder()
       .setTitle("Error")
       .setDescription(content)
-      .setColor(0x2ae7a8);
+      .setColor(0xecabcd);
     if (interaction.deferred || interaction.replied) {
       await interaction
         .editReply({ embeds: [errorEmbed] })
@@ -48,6 +48,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
         .reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral })
         .catch(() => undefined);
     }
+  }
+});
+
+client.on(Events.StageInstanceDelete, async (stageInstance) => {
+  try {
+    await recorder.handleStageInstanceDelete(stageInstance);
+  } catch (error) {
+    log.error("discord.stage_instance_delete_failed", {
+      guildId: stageInstance.guildId,
+      channelId: stageInstance.channelId,
+      stageInstanceId: stageInstance.id,
+      error,
+    });
   }
 });
 

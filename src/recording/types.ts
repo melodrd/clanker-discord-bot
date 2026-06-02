@@ -4,7 +4,11 @@ import type { VoiceConnection } from "@discordjs/voice";
 import type { Guild } from "discord.js";
 import type { SessionStats } from "../db/database.js";
 
-export type StopSource = "manual" | "max_duration" | "idle_timeout";
+export type StopSource =
+  | "manual"
+  | "max_duration"
+  | "idle_timeout"
+  | "stage_ended";
 
 export type StopSummary = {
   completedAt: string;

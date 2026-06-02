@@ -5,7 +5,7 @@ import { relativeMs } from "../utils/time.js";
 import { formatDuration, formatUtcDisplay } from "./format.js";
 import type { ActiveRecordingSession, StopSummary } from "./types.js";
 
-const defaultEmbedColor = 0x2ae7a8;
+const defaultEmbedColor = 0xecabcd;
 const unauthorizedMessage = "You are not allowed to use recording commands.";
 
 export function createRecordingEmbed(
