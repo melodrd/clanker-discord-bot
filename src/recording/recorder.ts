@@ -176,9 +176,10 @@ export class Recorder {
         session,
         interaction.user.id,
       );
-      await this.sessions.sendSessionEmbed(
+      await this.sessions.sendCompletedSessionMessage(
         session,
         createCompletedEmbed(session, summary),
+        summary.completedAt,
       );
       await interaction.deleteReply();
     } catch (_error) {

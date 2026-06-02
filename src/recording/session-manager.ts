@@ -4,6 +4,7 @@ import {
   VoiceConnectionStatus,
 } from "@discordjs/voice";
 import {
+  AttachmentBuilder,
   ChannelType,
   type ChatInputCommandInteraction,
   type EmbedBuilder,
@@ -19,6 +20,7 @@ import { errorMessage, UserFacingError } from "./errors.js";
 import { formatDuration } from "./format.js";
 import { SegmentFinalizer } from "./segment-finalizer.js";
 import { SpeakerCapture } from "./speaker-capture.js";
+import { createTranscriptMarkdown } from "./transcript-markdown.js";
 import { TranscriptionWorker } from "./transcription-worker.js";
 import type {
   ActiveRecordingSession,
@@ -272,13 +274,34 @@ export class RecordingSessionManager {
   async sendSessionEmbed(
     session: ActiveRecordingSession,
     embed: EmbedBuilder,
+    options: {
+      files?: AttachmentBuilder[];
+    } = {},
   ): Promise<void> {
     const channel = await session.guild.channels.fetch(session.channelId);
     if (!channel?.isSendable()) {
       throw new Error("Stage channel is not sendable");
     }
 
-    await channel.send({ embeds: [embed] });
+    await channel.send({
+      embeds: [embed],
+      files: options.files,
+    });
+  }
+
+  async sendCompletedSessionMessage(
+    session: ActiveRecordingSession,
+    embed: EmbedBuilder,
+    completedAt: string,
+  ): Promise<void> {
+    const transcriptAttachment = this.tryCreateTranscriptAttachment(
+      session,
+      completedAt,
+    );
+
+    await this.sendSessionEmbed(session, embed, {
+      files: transcriptAttachment ? [transcriptAttachment] : undefined,
+    });
   }
 
   async shutdown(reason: string): Promise<void> {
@@ -336,6 +359,40 @@ export class RecordingSessionManager {
     }
 
     return null;
+  }
+
+  private tryCreateTranscriptAttachment(
+    session: ActiveRecordingSession,
+    completedAt: string,
+  ): AttachmentBuilder | null {
+    try {
+      return this.createTranscriptAttachment(session, completedAt);
+    } catch (error) {
+      log.warn("recording.transcript_attachment_failed", {
+        sessionId: session.sessionId,
+        error,
+      });
+      return null;
+    }
+  }
+
+  private createTranscriptAttachment(
+    session: ActiveRecordingSession,
+    completedAt: string,
+  ): AttachmentBuilder | null {
+    const rows = this.db.getSessionTranscriptRows(session.sessionId);
+    if (rows.length === 0) return null;
+
+    const markdown = createTranscriptMarkdown({
+      sessionId: session.sessionId,
+      startedAt: session.startedAt,
+      completedAt,
+      rows,
+    });
+
+    return new AttachmentBuilder(Buffer.from(markdown, "utf8"), {
+      name: `lituus-transcript-${session.sessionId}.md`,
+    });
   }
 
   private clearIdleStop(session: ActiveRecordingSession): void {
@@ -515,7 +572,11 @@ export class RecordingSessionManager {
     const embed = createCompletedEmbed(session, summary, title, reason);
 
     try {
-      await this.sendSessionEmbed(session, embed);
+      await this.sendCompletedSessionMessage(
+        session,
+        embed,
+        summary.completedAt,
+      );
     } catch (error) {
       log.warn("recording.auto_stop_notify_failed", {
         sessionId: session.sessionId,

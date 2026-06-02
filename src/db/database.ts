@@ -30,6 +30,17 @@ export type RecordingParticipant = {
   username: string | null;
 };
 
+export type SessionTranscriptRow = {
+  id: string;
+  relative_start_ms: number;
+  relative_end_ms: number | null;
+  text: string;
+  confidence: number | null;
+  speaker_label: string;
+  display_name: string | null;
+  username: string | null;
+};
+
 export type MeetingListItem = {
   id: string;
   title: string | null;
@@ -597,6 +608,27 @@ export class AppDatabase {
         confidence: row.confidence,
       };
     });
+  }
+
+  getSessionTranscriptRows(sessionId: string): SessionTranscriptRow[] {
+    return this.db
+      .prepare<[string], SessionTranscriptRow>(
+        `select
+           ts.id,
+           ts.relative_start_ms,
+           ts.relative_end_ms,
+           ts.text,
+           ts.confidence,
+           rp.speaker_label,
+           rp.display_name,
+           rp.username
+         from transcript_segments ts
+         join recording_participants rp
+           on rp.id = ts.participant_id
+         where ts.session_id = ?
+         order by ts.relative_start_ms asc`,
+      )
+      .all(sessionId);
   }
 
   markInterruptedSessionsFailed(): { sessions: number; segments: number } {
