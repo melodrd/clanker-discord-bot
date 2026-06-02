@@ -12,20 +12,32 @@ import {
 import {
   ChannelType,
   type ChatInputCommandInteraction,
-  EmbedBuilder,
   MessageFlags,
   PermissionsBitField,
 } from "discord.js";
 import { env } from "../config/env.js";
-import type { AppDatabase, SessionStats } from "../db/database.js";
+import type { AppDatabase } from "../db/database.js";
 import { transcribeOggFile } from "../transcription/deepgram.js";
 import { createId, createSessionId } from "../utils/ids.js";
 import { log } from "../utils/log.js";
 import { nowIso, relativeMs } from "../utils/time.js";
+import {
+  createActiveStatusEmbed,
+  createCompletedEmbed,
+  createErrorEmbed,
+  createIdleStatusEmbed,
+  createNoActiveRecordingEmbed,
+  createPingEmbed,
+  createRecordingStartedEmbed,
+  createUnauthorizedEmbed,
+} from "./embeds.js";
+import { formatDuration } from "./format.js";
 import type {
   ActiveRecordingSession,
   ActiveSegment,
   SavedSegment,
+  StopSource,
+  StopSummary,
 } from "./types.js";
 
 const require = createRequire(import.meta.url);
@@ -36,16 +48,7 @@ const prism = require("prism-media") as {
   };
 };
 
-const unauthorizedMessage = "You are not allowed to use recording commands.";
 const segmentFinalizeTimeoutMs = 5_000;
-const defaultEmbedColor = 0x2ae7a8;
-
-type StopSource = "manual" | "max_duration" | "idle_timeout";
-
-type StopSummary = {
-  completedAt: string;
-  stats: SessionStats;
-};
 
 class UserFacingError extends Error {
   constructor(message: string) {
@@ -151,41 +154,16 @@ function safeJsonStringify(value: unknown): string {
   }
 }
 
-function formatUtcDisplay(iso: string): string {
-  const parsed = new Date(iso);
-  if (Number.isNaN(parsed.getTime())) return `${iso} UTC`;
-  return parsed.toISOString().replace("T", " ").replace(".000Z", " UTC");
-}
-
-function formatDuration(ms: number): string {
-  const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  if (minutes > 0) return `${minutes}m ${seconds}s`;
-  return `${seconds}s`;
-}
-
 export class Recorder {
   private readonly activeSessions = new Map<string, ActiveRecordingSession>();
 
   constructor(private readonly db: AppDatabase) {}
 
-  private createEmbed(title: string, description?: string): EmbedBuilder {
-    const embed = new EmbedBuilder()
-      .setTitle(title)
-      .setColor(defaultEmbedColor);
-    if (description) embed.setDescription(description);
-    return embed;
-  }
-
   async handleInteraction(
     interaction: ChatInputCommandInteraction,
   ): Promise<void> {
     if (interaction.commandName === "ping") {
-      await interaction.reply({ embeds: [this.createEmbed("Pong")] });
+      await interaction.reply({ embeds: [createPingEmbed()] });
       return;
     }
 
@@ -257,7 +235,7 @@ export class Recorder {
     });
 
     await interaction.reply({
-      embeds: [this.createEmbed("Unauthorized", unauthorizedMessage)],
+      embeds: [createUnauthorizedEmbed()],
       flags: MessageFlags.Ephemeral,
     });
     return false;
@@ -470,12 +448,7 @@ export class Recorder {
       });
 
       await interaction.editReply({
-        embeds: [
-          this.createEmbed("Recording Started").addFields(
-            { name: "Session ID", value: sessionId, inline: true },
-            { name: "Channel", value: `<#${channel.id}>`, inline: true },
-          ),
-        ],
+        embeds: [createRecordingStartedEmbed(sessionId, channel.id)],
       });
     } catch (error) {
       if (connection) {
@@ -497,7 +470,7 @@ export class Recorder {
           ? error.message
           : "Failed to start recording.";
       await interaction.editReply({
-        embeds: [this.createEmbed("Error", message)],
+        embeds: [createErrorEmbed(message)],
       });
     }
   }
@@ -828,84 +801,18 @@ export class Recorder {
   ): Promise<void> {
     const session = this.getActiveSession();
     if (!session) {
-      const idleEmbed = new EmbedBuilder()
-        .setTitle("Recording Status")
-        .setDescription("Recording is currently idle.")
-        .setColor(defaultEmbedColor);
-
       await interaction.reply({
-        embeds: [idleEmbed],
+        embeds: [createIdleStatusEmbed()],
         flags: MessageFlags.Ephemeral,
       });
       return;
     }
 
     const stats = this.db.getSessionStats(session.sessionId);
-    const now = Date.now();
-    const maxDurationStatus = session.maxDurationStopAt
-      ? `in ${formatDuration(session.maxDurationStopAt - now)}`
-      : "Disabled";
-    const idleStatus =
-      env.RECORDING_IDLE_STOP_MS <= 0
-        ? "Disabled"
-        : session.idleStopAt
-          ? `in ${formatDuration(session.idleStopAt - now)}`
-          : "Waiting for silence";
-
-    const statusEmbed = new EmbedBuilder()
-      .setTitle("Recording Status")
-      .setDescription("Recording is active.")
-      .setColor(defaultEmbedColor)
-      .addFields(
-        { name: "Channel", value: `<#${session.channelId}>`, inline: true },
-        { name: "Session ID", value: session.sessionId, inline: true },
-        {
-          name: "Voice Status",
-          value: String(session.connection.state.status),
-          inline: true,
-        },
-        {
-          name: "Elapsed",
-          value: formatDuration(relativeMs(session.startedAt)),
-          inline: true,
-        },
-        { name: "Max Auto-Stop", value: maxDurationStatus, inline: true },
-        { name: "Idle Auto-Stop", value: idleStatus, inline: true },
-        {
-          name: "Participants",
-          value: String(stats.participantsCount),
-          inline: true,
-        },
-        {
-          name: "Audio Segments",
-          value: String(stats.audioSegmentsCount),
-          inline: true,
-        },
-        {
-          name: "Transcribed",
-          value: String(stats.transcribedSegmentsCount),
-          inline: true,
-        },
-        {
-          name: "Failed",
-          value: String(stats.failedSegmentsCount),
-          inline: true,
-        },
-        {
-          name: "Transcribing",
-          value: String(stats.transcribingSegmentsCount),
-          inline: true,
-        },
-        {
-          name: "Active Speaker Streams",
-          value: String(session.activeUserStreams.size),
-          inline: true,
-        },
-      );
 
     await interaction.reply({
       flags: MessageFlags.Ephemeral,
-      embeds: [statusEmbed],
+      embeds: [createActiveStatusEmbed(session, stats)],
     });
   }
 
@@ -915,7 +822,7 @@ export class Recorder {
     const session = this.getActiveSession();
     if (!session) {
       await interaction.reply({
-        embeds: [this.createEmbed("Recording", "No active recording session.")],
+        embeds: [createNoActiveRecordingEmbed()],
         flags: MessageFlags.Ephemeral,
       });
       return;
@@ -937,46 +844,13 @@ export class Recorder {
         `Stopped by ${interaction.user.id}`,
       );
       await interaction.editReply({
-        embeds: [this.createCompletedEmbed(session, summary)],
+        embeds: [createCompletedEmbed(session, summary)],
       });
     } catch (_error) {
       await interaction.editReply({
-        embeds: [
-          this.createEmbed("Error", "Failed to stop recording cleanly."),
-        ],
+        embeds: [createErrorEmbed("Failed to stop recording cleanly.")],
       });
     }
-  }
-
-  private createCompletedEmbed(
-    session: ActiveRecordingSession,
-    summary: StopSummary,
-    title = "Recording Completed",
-    description?: string,
-  ): EmbedBuilder {
-    const embed = new EmbedBuilder()
-      .setTitle(title)
-      .setColor(defaultEmbedColor)
-      .addFields(
-        {
-          name: "Start Date",
-          value: formatUtcDisplay(session.startedAt),
-          inline: true,
-        },
-        {
-          name: "End Date",
-          value: formatUtcDisplay(summary.completedAt),
-          inline: true,
-        },
-        {
-          name: "Participants",
-          value: String(summary.stats.participantsCount),
-          inline: true,
-        },
-      );
-
-    if (description) embed.setDescription(description);
-    return embed;
   }
 
   private async stopSession(
@@ -1074,7 +948,7 @@ export class Recorder {
       source === "max_duration"
         ? "Recording Auto-Stopped: Max Duration"
         : "Recording Auto-Stopped: Idle Timeout";
-    const embed = this.createCompletedEmbed(session, summary, title, reason);
+    const embed = createCompletedEmbed(session, summary, title, reason);
 
     try {
       const user = await session.guild.client.users.fetch(

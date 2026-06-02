@@ -2,6 +2,14 @@ import type { WriteStream } from "node:fs";
 import type { Readable } from "node:stream";
 import type { VoiceConnection } from "@discordjs/voice";
 import type { Guild } from "discord.js";
+import type { SessionStats } from "../db/database.js";
+
+export type StopSource = "manual" | "max_duration" | "idle_timeout";
+
+export type StopSummary = {
+  completedAt: string;
+  stats: SessionStats;
+};
 
 export type ActiveSegment = {
   segmentId: string;
