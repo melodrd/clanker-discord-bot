@@ -12,6 +12,7 @@ import {
 } from "discord.js";
 import { env } from "../config/env.js";
 import type { AppDatabase, SessionStats } from "../db/database.js";
+import { createMeetingSummary } from "../summarization/meeting-summary.js";
 import { createSessionId } from "../utils/ids.js";
 import { log } from "../utils/log.js";
 import { nowIso } from "../utils/time.js";
@@ -30,6 +31,10 @@ import type {
 
 const segmentFinalizeTimeoutMs = 5_000;
 const unknownStageInstanceCode = 10067;
+
+type CompletionAttachmentOptions = {
+  onSummaryFailed?: () => void;
+};
 
 export type ActiveSessionStatus = {
   session: ActiveRecordingSession;
@@ -294,13 +299,27 @@ export class RecordingSessionManager {
     embed: EmbedBuilder,
     completedAt: string,
   ): Promise<void> {
-    const transcriptAttachment = this.tryCreateTranscriptAttachment(
+    let summaryFailed = false;
+    const attachments = await this.tryCreateCompletionAttachments(
       session,
       completedAt,
+      {
+        onSummaryFailed: () => {
+          summaryFailed = true;
+        },
+      },
     );
 
+    if (summaryFailed) {
+      embed.addFields({
+        name: "Summary",
+        value: "Summary generation failed; raw transcript attached.",
+        inline: false,
+      });
+    }
+
     await this.sendSessionEmbed(session, embed, {
-      files: transcriptAttachment ? [transcriptAttachment] : undefined,
+      files: attachments.length > 0 ? attachments : undefined,
     });
   }
 
@@ -361,38 +380,63 @@ export class RecordingSessionManager {
     return null;
   }
 
-  private tryCreateTranscriptAttachment(
+  private async tryCreateCompletionAttachments(
     session: ActiveRecordingSession,
     completedAt: string,
-  ): AttachmentBuilder | null {
+    options: CompletionAttachmentOptions = {},
+  ): Promise<AttachmentBuilder[]> {
     try {
-      return this.createTranscriptAttachment(session, completedAt);
+      return await this.createCompletionAttachments(
+        session,
+        completedAt,
+        options,
+      );
     } catch (error) {
       log.warn("recording.transcript_attachment_failed", {
         sessionId: session.sessionId,
         error,
       });
-      return null;
+      return [];
     }
   }
 
-  private createTranscriptAttachment(
+  private async createCompletionAttachments(
     session: ActiveRecordingSession,
     completedAt: string,
-  ): AttachmentBuilder | null {
+    options: CompletionAttachmentOptions = {},
+  ): Promise<AttachmentBuilder[]> {
     const rows = this.db.getSessionTranscriptRows(session.sessionId);
-    if (rows.length === 0) return null;
+    if (rows.length === 0) return [];
 
-    const markdown = createTranscriptMarkdown({
+    const transcriptMarkdown = createTranscriptMarkdown({
       sessionId: session.sessionId,
       startedAt: session.startedAt,
       completedAt,
       rows,
     });
 
-    return new AttachmentBuilder(Buffer.from(markdown, "utf8"), {
-      name: `lituus-transcript-${session.sessionId}.md`,
+    const attachments = [
+      new AttachmentBuilder(Buffer.from(transcriptMarkdown, "utf8"), {
+        name: `lituus-transcript-${session.sessionId}.md`,
+      }),
+    ];
+
+    const summary = await createMeetingSummary({
+      sessionId: session.sessionId,
+      transcriptMarkdown,
     });
+
+    if (summary.status === "created") {
+      attachments.push(
+        new AttachmentBuilder(Buffer.from(summary.markdown, "utf8"), {
+          name: `lituus-summary-${session.sessionId}.md`,
+        }),
+      );
+    } else if (summary.status === "failed") {
+      options.onSummaryFailed?.();
+    }
+
+    return attachments;
   }
 
   private clearIdleStop(session: ActiveRecordingSession): void {
