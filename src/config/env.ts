@@ -4,6 +4,7 @@ import { log } from "../utils/log.js";
 config();
 
 const maxTimerDelayMs = 2_147_483_647;
+const defaultOpenRouterModel = "openai/gpt-oss-120b:free";
 
 const botRequiredEnvVars = [
   "DISCORD_TOKEN",
@@ -49,6 +50,53 @@ function optionalNonNegativeInteger(name: string, fallback: number): number {
   return parsed;
 }
 
+function optionalPositiveInteger(
+  name: string,
+  fallback: number,
+  options: { max?: number } = {},
+): number {
+  const value = process.env[name]?.trim();
+  if (!value) return fallback;
+
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a safe positive integer`);
+  }
+
+  if (options.max !== undefined && parsed > options.max) {
+    throw new Error(`${name} must be less than or equal to ${options.max}`);
+  }
+
+  return parsed;
+}
+
+function optionalBoundedNumber(
+  name: string,
+  fallback: number,
+  options: { min: number; max: number },
+): number {
+  const value = process.env[name]?.trim();
+  if (!value) return fallback;
+
+  const parsed = Number(value);
+  if (
+    !Number.isFinite(parsed) ||
+    parsed < options.min ||
+    parsed > options.max
+  ) {
+    throw new Error(
+      `${name} must be a finite number between ${options.min} and ${options.max}`,
+    );
+  }
+
+  return parsed;
+}
+
+function optionalString(name: string): string | null {
+  const value = process.env[name]?.trim();
+  return value ? value : null;
+}
+
 const allowedDiscordUserIds = parseAllowedUserIds(
   process.env.ALLOWED_DISCORD_USER_IDS ?? "",
 );
@@ -88,4 +136,20 @@ export const env = {
   DEEPGRAM_LANGUAGE: "en",
   DEEPGRAM_MODEL: "nova-3",
   DEEPGRAM_TIMEOUT_MS: 60_000,
+  OPENROUTER_API_KEY: optionalString("OPENROUTER_API_KEY"),
+  OPENROUTER_MODEL:
+    process.env.OPENROUTER_MODEL?.trim() || defaultOpenRouterModel,
+  OPENROUTER_TIMEOUT_MS: optionalPositiveInteger(
+    "OPENROUTER_TIMEOUT_MS",
+    120_000,
+    { max: maxTimerDelayMs },
+  ),
+  OPENROUTER_MAX_TOKENS: optionalPositiveInteger(
+    "OPENROUTER_MAX_TOKENS",
+    40_000,
+  ),
+  OPENROUTER_TEMPERATURE: optionalBoundedNumber("OPENROUTER_TEMPERATURE", 0.2, {
+    min: 0,
+    max: 2,
+  }),
 } as const;
