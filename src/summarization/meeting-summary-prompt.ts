@@ -270,7 +270,7 @@ If there are no action items and no useful follow-ups, write:
 
 Include this optional section only when a participant explicitly asks that something be captured, remembered, emphasized, or included in the notes, transcript, summary, or final output.
 
-Recognize requests addressed to the note-taking system, including: bot, assistant, AI, agent, summarizer, note-taker, secretary, recorder, meeting notes, transcript, summary, Lituus-bot, or clanker.
+Recognize requests addressed to the note-taking system, including: bot, assistant, AI, agent, summarizer, note-taker, secretary, recorder, meeting notes, transcript, summary, clanker-discord-bot, or clanker-bot.
 
 Common signals include:
 

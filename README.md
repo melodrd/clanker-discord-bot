@@ -1,10 +1,25 @@
-# lituus-discord-bot
+# clanker-discord-bot
 
 Discord Stage recorder bot.
 
 It joins a Stage channel, records each speaker into `.ogg` segments, transcribes completed segments with Deepgram, stores session metadata in SQLite, and can optionally generate an AI meeting summary with OpenRouter.
 
 Discord invite permission string: `1133568`.
+
+## Invite The Bot
+
+Before doing anything else, add the bot to your Discord server.
+
+1. Open the Discord OAuth2 URL generator for your application.
+2. Select the `bot` and `applications.commands` scopes.
+3. Use permission integer `1133568`.
+4. Invite the bot to the target server.
+
+If you prefer to build the invite URL manually, use:
+
+```text
+https://discord.com/api/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=1133568&scope=bot%20applications.commands
+```
 
 ## Requirements
 
@@ -53,9 +68,10 @@ Required environment variables:
 
 Optional environment variables:
 
-- `DATABASE_PATH` - defaults to `./data/lituus.sqlite`
+- `DATABASE_PATH` - defaults to `./data/clanker.sqlite`
 - `OPENROUTER_API_KEY` - leave blank to disable meeting summaries
 - `OPENROUTER_MODEL` - defaults to `openai/gpt-oss-120b:free`
+- `OPENROUTER_FALLBACK_MODEL` - defaults to `z-ai/glm-4.5-air:free`
 - `OPENROUTER_TIMEOUT_MS` - defaults to `360000`
 - `OPENROUTER_MAX_TOKENS` - defaults to `140000`
 - `OPENROUTER_TEMPERATURE` - defaults to `0.2`
@@ -92,9 +108,11 @@ npm start
 - `/record stop`
 - `/record status`
 
+To use recording, join an active Stage and run `/record start` in the Stage chat. Use `/record stop` to end it manually. It also stops automatically when the Stage ends.
+
 ## Data
 
-- SQLite database: `./data/lituus.sqlite` by default
+- SQLite database: `./data/clanker.sqlite` by default
 - Audio segments: `./recordings`
 
 Keep these folders private. They contain sensitive recordings and transcripts.
@@ -103,15 +121,15 @@ Completed recordings post in the Stage chat with a raw transcript Markdown attac
 
 ## Docker
 
-Use Docker if you want a containerized runtime with persisted local data.
+Use Docker if you want a containerized runtime with persisted local data. Make sure the bot has already been invited to your Discord server, then run the commands below.
 
 1. Make sure `.env` is filled in. `compose.yml` reads it directly.
 
 2. Register slash commands once:
 
 ```bash
-docker build --target build -t lituus-discord-bot-command-runner .
-docker run --rm --env-file .env lituus-discord-bot-command-runner npm run commands:register
+docker build --target build -t clanker-discord-bot-command-runner .
+docker run --rm --env-file .env clanker-discord-bot-command-runner npm run commands:register
 ```
 
 The command registration script uses `tsx` and source files from `src/`, so it runs from the Docker `build` stage instead of the final runtime image.
@@ -147,5 +165,5 @@ If Docker prints a BuildKit/buildx warning, install or enable the Docker Buildx 
 ## Notes
 
 - Recording controls are limited to `ALLOWED_DISCORD_USER_IDS`.
-- Recordings auto-stop when the active Stage ends, after `RECORDING_MAX_DURATION_MS`, or after `RECORDING_IDLE_STOP_MS` with no active speakers. Set either duration value to `0` to disable that guard.
+- Recordings also auto-stop after `RECORDING_MAX_DURATION_MS` or after `RECORDING_IDLE_STOP_MS` with no active speakers. Set either duration value to `0` to disable that guard.
 - Recording start, manual stop, and auto-stop completion messages post in the Stage chat.

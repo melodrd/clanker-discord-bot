@@ -1,4 +1,5 @@
 import { env } from "../config/env.js";
+import { log } from "../utils/log.js";
 
 export type OpenRouterChatMessage = {
   role: "system" | "user" | "assistant";
@@ -88,13 +89,16 @@ async function readJsonResponse(response: Response): Promise<unknown> {
   }
 }
 
-export async function createOpenRouterChatCompletion(
-  input: OpenRouterCompletionInput,
-): Promise<string> {
-  if (!env.OPENROUTER_API_KEY) {
-    throw new Error("OpenRouter API key is not configured");
-  }
+function completionModels(): string[] {
+  return [env.OPENROUTER_MODEL, env.OPENROUTER_FALLBACK_MODEL].filter(
+    (model, index, models) => models.indexOf(model) === index,
+  );
+}
 
+async function requestOpenRouterChatCompletion(
+  input: OpenRouterCompletionInput,
+  model: string,
+): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(
     () => controller.abort(),
@@ -109,7 +113,7 @@ export async function createOpenRouterChatCompletion(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: env.OPENROUTER_MODEL,
+        model,
         messages: input.messages,
         temperature: env.OPENROUTER_TEMPERATURE,
         max_tokens: env.OPENROUTER_MAX_TOKENS,
@@ -137,4 +141,38 @@ export async function createOpenRouterChatCompletion(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export async function createOpenRouterChatCompletion(
+  input: OpenRouterCompletionInput,
+): Promise<string> {
+  if (!env.OPENROUTER_API_KEY) {
+    throw new Error("OpenRouter API key is not configured");
+  }
+
+  const errors: string[] = [];
+  const models = completionModels();
+
+  for (const [index, model] of models.entries()) {
+    try {
+      return await requestOpenRouterChatCompletion(input, model);
+    } catch (error) {
+      const message = errorMessage(error);
+      errors.push(`${model}: ${message}`);
+
+      const fallbackModel = models[index + 1];
+      if (fallbackModel) {
+        log.warn("openrouter.model_failed", {
+          sessionId: input.sessionId,
+          model,
+          fallbackModel,
+          error: message,
+        });
+      }
+    }
+  }
+
+  throw new Error(
+    `OpenRouter request failed for all configured models: ${errors.join("; ")}`,
+  );
 }

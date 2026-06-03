@@ -1,5 +1,5 @@
 {
-  "name": "lituus-discord-bot",
+  "name": "clanker-discord-bot",
   "version": "0.1.0",
   "description": "A Discord Stage recorder bot that stores per-speaker Ogg segments and Deepgram transcripts.",
   "type": "module",

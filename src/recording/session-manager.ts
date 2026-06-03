@@ -417,7 +417,7 @@ export class RecordingSessionManager {
 
     const attachments = [
       new AttachmentBuilder(Buffer.from(transcriptMarkdown, "utf8"), {
-        name: `lituus-transcript-${session.sessionId}.md`,
+        name: `clanker-transcript-${session.sessionId}.md`,
       }),
     ];
 
@@ -429,7 +429,7 @@ export class RecordingSessionManager {
     if (summary.status === "created") {
       attachments.push(
         new AttachmentBuilder(Buffer.from(summary.markdown, "utf8"), {
-          name: `lituus-summary-${session.sessionId}.md`,
+          name: `clanker-summary-${session.sessionId}.md`,
         }),
       );
     } else if (summary.status === "failed") {

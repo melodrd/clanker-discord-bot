@@ -5,6 +5,7 @@ config();
 
 const maxTimerDelayMs = 2_147_483_647;
 const defaultOpenRouterModel = "openai/gpt-oss-120b:free";
+const defaultOpenRouterFallbackModel = "z-ai/glm-4.5-air:free";
 
 const botRequiredEnvVars = [
   "DISCORD_TOKEN",
@@ -123,7 +124,7 @@ export const env = {
   DISCORD_GUILD_ID: process.env.DISCORD_GUILD_ID ?? "",
   DEEPGRAM_API: process.env.DEEPGRAM_API ?? "",
   ALLOWED_DISCORD_USER_IDS: allowedDiscordUserIds,
-  DATABASE_PATH: process.env.DATABASE_PATH ?? "./data/lituus.sqlite",
+  DATABASE_PATH: process.env.DATABASE_PATH ?? "./data/clanker.sqlite",
   RECORDINGS_DIR: "./recordings",
   RECORDING_MAX_DURATION_MS: optionalNonNegativeInteger(
     "RECORDING_MAX_DURATION_MS",
@@ -139,6 +140,9 @@ export const env = {
   OPENROUTER_API_KEY: optionalString("OPENROUTER_API_KEY"),
   OPENROUTER_MODEL:
     process.env.OPENROUTER_MODEL?.trim() || defaultOpenRouterModel,
+  OPENROUTER_FALLBACK_MODEL:
+    process.env.OPENROUTER_FALLBACK_MODEL?.trim() ||
+    defaultOpenRouterFallbackModel,
   OPENROUTER_TIMEOUT_MS: optionalPositiveInteger(
     "OPENROUTER_TIMEOUT_MS",
     120_000,

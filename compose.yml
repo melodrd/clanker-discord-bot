@@ -1,7 +1,7 @@
 services:
   bot:
     build: .
-    container_name: lituus-discord-bot
+    container_name: clanker-bot
     restart: unless-stopped
     env_file:
       - .env
