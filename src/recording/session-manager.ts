@@ -8,7 +8,11 @@ import {
   ChannelType,
   type ChatInputCommandInteraction,
   type EmbedBuilder,
+  type GuildBasedChannel,
   PermissionsBitField,
+  type StageChannel,
+  type StageInstance,
+  type VoiceState,
 } from "discord.js";
 import { env } from "../config/env.js";
 import type { AppDatabase, SessionStats } from "../db/database.js";
@@ -16,7 +20,11 @@ import { createMeetingSummary } from "../summarization/meeting-summary.js";
 import { createSessionId } from "../utils/ids.js";
 import { log } from "../utils/log.js";
 import { nowIso } from "../utils/time.js";
-import { createCompletedEmbed } from "./embeds.js";
+import {
+  createCompletedEmbed,
+  createProcessingRecordingEmbed,
+  createRecordingReminderEmbed,
+} from "./embeds.js";
 import { errorMessage, UserFacingError } from "./errors.js";
 import { formatDuration } from "./format.js";
 import { SegmentFinalizer } from "./segment-finalizer.js";
@@ -30,6 +38,7 @@ import type {
 } from "./types.js";
 
 const segmentFinalizeTimeoutMs = 5_000;
+const maxRecordingReminderUserMentions = 5;
 const unknownStageInstanceCode = 10067;
 
 type CompletionAttachmentOptions = {
@@ -52,6 +61,25 @@ function isUnknownStageInstanceError(error: unknown): boolean {
     "code" in error &&
     error.code === unknownStageInstanceCode
   );
+}
+
+function getStageSpeakerUserIds(channel: StageChannel): string[] {
+  return [...channel.members.values()]
+    .filter((member) => !member.user.bot)
+    .filter((member) => member.voice.channelId === channel.id)
+    .filter((member) => member.voice.suppress === false)
+    .map((member) => member.id);
+}
+
+function getStageParticipantUserIds(channel: StageChannel): string[] {
+  return [...channel.members.values()]
+    .filter((member) => !member.user.bot)
+    .filter((member) => member.voice.channelId === channel.id)
+    .map((member) => member.id);
+}
+
+function formatUserMentions(userIds: string[]): string {
+  return userIds.map((id) => `<@${id}>`).join(" ");
 }
 
 async function waitForTaskSetToDrain(
@@ -230,7 +258,25 @@ export class RecordingSessionManager {
       this.activeSessions.set(sessionId, session);
       this.scheduleMaxDurationStop(session);
       this.scheduleIdleStop(session);
-      this.speakerCapture.listenForSpeakers(session);
+
+      const initialSpeakerUserIds = getStageSpeakerUserIds(channel);
+      if (initialSpeakerUserIds.length === 0) {
+        log.warn("recording.no_active_stage_speakers", {
+          sessionId,
+          guildId: guild.id,
+          channelId: channel.id,
+          startedBy: interaction.user.id,
+        });
+      } else {
+        log.info("recording.initial_stage_speakers", {
+          sessionId,
+          guildId: guild.id,
+          channelId: channel.id,
+          speakerCount: initialSpeakerUserIds.length,
+          speakerUserIds: initialSpeakerUserIds,
+        });
+      }
+      this.speakerCapture.listenForSpeakers(session, initialSpeakerUserIds);
 
       log.info("recording.started", {
         sessionId,
@@ -264,16 +310,139 @@ export class RecordingSessionManager {
     );
   }
 
-  async stopStageSession(guildId: string, channelId: string): Promise<boolean> {
+  async stopStageSession(
+    guildId: string,
+    channelId: string,
+  ): Promise<{ session: ActiveRecordingSession; summary: StopSummary } | null> {
     const session = this.getActiveSessionForChannel(guildId, channelId);
-    if (!session) return false;
+    if (!session) return null;
 
-    await this.autoStopRecording(
-      session.sessionId,
+    const summary = await this.stopSession(
+      session,
       "stage_ended",
       "The active Stage was ended",
     );
-    return true;
+    return { session, summary };
+  }
+
+  handleVoiceStateUpdate(oldState: VoiceState, newState: VoiceState): void {
+    if (newState.member?.user.bot) return;
+    if (newState.channelId === null) return;
+    if (newState.suppress !== false) return;
+
+    const session = this.getActiveSessionForChannel(
+      newState.guild.id,
+      newState.channelId,
+    );
+    if (!session) return;
+
+    const becameStageSpeaker =
+      oldState.channelId !== newState.channelId || oldState.suppress !== false;
+    if (!becameStageSpeaker) return;
+
+    log.info("recording.stage_speaker_detected", {
+      sessionId: session.sessionId,
+      guildId: session.guildId,
+      channelId: session.channelId,
+      discordUserId: newState.id,
+    });
+
+    this.speakerCapture.captureSpeaker(
+      session,
+      newState.id,
+      "voice_state_update",
+    );
+  }
+
+  async sendRecordingReminder(stageInstance: StageInstance): Promise<void> {
+    const guild = stageInstance.guild;
+    if (!guild) {
+      log.warn("recording.reminder_guild_unavailable", {
+        guildId: stageInstance.guildId,
+        channelId: stageInstance.channelId,
+        stageInstanceId: stageInstance.id,
+      });
+      return;
+    }
+
+    let channel: GuildBasedChannel | null;
+
+    try {
+      channel = await guild.channels.fetch(stageInstance.channelId);
+    } catch (error) {
+      log.warn("recording.reminder_channel_fetch_failed", {
+        guildId: stageInstance.guildId,
+        channelId: stageInstance.channelId,
+        stageInstanceId: stageInstance.id,
+        error,
+      });
+      return;
+    }
+
+    if (!channel || channel.type !== ChannelType.GuildStageVoice) {
+      log.warn("recording.reminder_channel_unavailable", {
+        guildId: stageInstance.guildId,
+        channelId: stageInstance.channelId,
+        stageInstanceId: stageInstance.id,
+      });
+      return;
+    }
+
+    if (!channel.isSendable()) {
+      log.warn("recording.reminder_channel_not_sendable", {
+        guildId: stageInstance.guildId,
+        channelId: stageInstance.channelId,
+        stageInstanceId: stageInstance.id,
+      });
+      return;
+    }
+
+    const existingSession = this.getActiveSessionForChannel(
+      stageInstance.guildId,
+      stageInstance.channelId,
+    );
+
+    if (existingSession) {
+      log.info("recording.reminder_skipped_active_session", {
+        sessionId: existingSession.sessionId,
+        guildId: stageInstance.guildId,
+        channelId: stageInstance.channelId,
+      });
+      return;
+    }
+
+    const mentionedUserIds = getStageParticipantUserIds(channel).slice(
+      0,
+      maxRecordingReminderUserMentions,
+    );
+    const reminderContent =
+      mentionedUserIds.length > 0
+        ? `${formatUserMentions(mentionedUserIds)} Do you want to record this meeting?`
+        : "Do you want to record this meeting?";
+
+    try {
+      await channel.send({
+        content: reminderContent,
+        embeds: [createRecordingReminderEmbed(channel.id)],
+        allowedMentions:
+          mentionedUserIds.length > 0
+            ? { users: mentionedUserIds }
+            : { parse: [] },
+      });
+      log.info("recording.reminder_sent", {
+        guildId: stageInstance.guildId,
+        channelId: stageInstance.channelId,
+        stageInstanceId: stageInstance.id,
+        mentionedUserCount: mentionedUserIds.length,
+      });
+    } catch (error) {
+      log.warn("recording.reminder_send_failed", {
+        guildId: stageInstance.guildId,
+        channelId: stageInstance.channelId,
+        stageInstanceId: stageInstance.id,
+        error,
+      });
+    }
   }
 
   async sendSessionEmbed(
@@ -528,6 +697,7 @@ export class RecordingSessionManager {
       this.db.updateRecordingSessionStatus(session.sessionId, "stopping", {
         stoppedAt,
       });
+      await this.sendProcessingSessionMessage(session, source);
 
       try {
         session.connection.destroy();
@@ -598,6 +768,41 @@ export class RecordingSessionManager {
       });
 
       throw error;
+    }
+  }
+
+  private async sendProcessingSessionMessage(
+    session: ActiveRecordingSession,
+    source: StopSource,
+  ): Promise<void> {
+    try {
+      const channel = await session.guild.channels.fetch(session.channelId);
+      if (!channel?.isSendable()) {
+        log.warn("recording.processing_notice_channel_unavailable", {
+          sessionId: session.sessionId,
+          guildId: session.guildId,
+          channelId: session.channelId,
+        });
+        return;
+      }
+
+      await channel.send({
+        embeds: [createProcessingRecordingEmbed(source)],
+      });
+      log.info("recording.processing_notice_sent", {
+        sessionId: session.sessionId,
+        guildId: session.guildId,
+        channelId: session.channelId,
+        source,
+      });
+    } catch (error) {
+      log.warn("recording.processing_notice_failed", {
+        sessionId: session.sessionId,
+        guildId: session.guildId,
+        channelId: session.channelId,
+        source,
+        error,
+      });
     }
   }
 

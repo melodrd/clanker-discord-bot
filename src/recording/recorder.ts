@@ -1,7 +1,10 @@
 import {
+  ChannelType,
   type ChatInputCommandInteraction,
+  type Guild,
   MessageFlags,
   type StageInstance,
+  type VoiceState,
 } from "discord.js";
 import { env } from "../config/env.js";
 import type { AppDatabase } from "../db/database.js";
@@ -18,6 +21,18 @@ import {
 } from "./embeds.js";
 import { UserFacingError } from "./errors.js";
 import { RecordingSessionManager } from "./session-manager.js";
+import type { ActiveRecordingSession, StopSummary } from "./types.js";
+
+const unknownStageInstanceCode = 10067;
+
+function isUnknownStageInstanceError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === unknownStageInstanceCode
+  );
+}
 
 export class Recorder {
   private readonly sessions: RecordingSessionManager;
@@ -65,6 +80,41 @@ export class Recorder {
     await this.sessions.shutdown(reason);
   }
 
+  async handleStageInstanceCreate(stageInstance: StageInstance): Promise<void> {
+    log.info("recording.stage_started", {
+      guildId: stageInstance.guildId,
+      channelId: stageInstance.channelId,
+      stageInstanceId: stageInstance.id,
+    });
+
+    await this.sessions.sendRecordingReminder(stageInstance);
+  }
+
+  async sendRecordingRemindersForActiveStages(guild: Guild): Promise<void> {
+    const channels = await guild.channels.fetch();
+
+    for (const channel of channels.values()) {
+      if (!channel || channel.type !== ChannelType.GuildStageVoice) continue;
+
+      const stageInstance =
+        channel.stageInstance ??
+        (await guild.stageInstances.fetch(channel).catch((error) => {
+          if (isUnknownStageInstanceError(error)) return null;
+
+          log.warn("recording.active_stage_fetch_failed", {
+            guildId: guild.id,
+            channelId: channel.id,
+            error,
+          });
+          return null;
+        }));
+
+      if (stageInstance) {
+        await this.handleStageInstanceCreate(stageInstance);
+      }
+    }
+  }
+
   async handleStageInstanceDelete(stageInstance: StageInstance): Promise<void> {
     log.info("recording.stage_ended", {
       guildId: stageInstance.guildId,
@@ -72,10 +122,30 @@ export class Recorder {
       stageInstanceId: stageInstance.id,
     });
 
-    await this.sessions.stopStageSession(
+    const stoppedSession = await this.sessions.stopStageSession(
       stageInstance.guildId,
       stageInstance.channelId,
     );
+    if (!stoppedSession) return;
+
+    try {
+      await this.sendCompletedRecording(
+        stoppedSession.session,
+        stoppedSession.summary,
+      );
+    } catch (error) {
+      log.warn("recording.stage_end_notify_failed", {
+        sessionId: stoppedSession.session.sessionId,
+        guildId: stoppedSession.session.guildId,
+        channelId: stoppedSession.session.channelId,
+        stageInstanceId: stageInstance.id,
+        error,
+      });
+    }
+  }
+
+  handleVoiceStateUpdate(oldState: VoiceState, newState: VoiceState): void {
+    this.sessions.handleVoiceStateUpdate(oldState, newState);
   }
 
   private async authorizeRecordingInteraction(
@@ -176,16 +246,23 @@ export class Recorder {
         session,
         interaction.user.id,
       );
-      await this.sessions.sendCompletedSessionMessage(
-        session,
-        createCompletedEmbed(session, summary),
-        summary.completedAt,
-      );
+      await this.sendCompletedRecording(session, summary);
       await interaction.deleteReply();
     } catch (_error) {
       await interaction.editReply({
         embeds: [createErrorEmbed("Failed to stop recording cleanly.")],
       });
     }
+  }
+
+  private async sendCompletedRecording(
+    session: ActiveRecordingSession,
+    summary: StopSummary,
+  ): Promise<void> {
+    await this.sessions.sendCompletedSessionMessage(
+      session,
+      createCompletedEmbed(session, summary),
+      summary.completedAt,
+    );
   }
 }

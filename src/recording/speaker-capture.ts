@@ -12,6 +12,11 @@ import type { SegmentFinalizer } from "./segment-finalizer.js";
 import { createOggStream } from "./stream-utils.js";
 import type { ActiveRecordingSession, ActiveSegment } from "./types.js";
 
+type SpeakerCaptureTrigger =
+  | "stage_voice_state"
+  | "voice_receiver_speaking"
+  | "voice_state_update";
+
 export class SpeakerCapture {
   constructor(
     private readonly dependencies: {
@@ -22,10 +27,38 @@ export class SpeakerCapture {
     },
   ) {}
 
-  listenForSpeakers(session: ActiveRecordingSession): void {
-    session.connection.receiver.speaking.on("start", (discordUserId) => {
-      void this.handleSpeakerStart(session, discordUserId);
+  listenForSpeakers(
+    session: ActiveRecordingSession,
+    initialSpeakerUserIds: string[] = [],
+  ): void {
+    log.info("voice.speaker_listener_attached", {
+      sessionId: session.sessionId,
+      guildId: session.guildId,
+      channelId: session.channelId,
+      initialSpeakerCount: initialSpeakerUserIds.length,
+      receiverSpeakingUserCount:
+        session.connection.receiver.speaking.users.size,
     });
+
+    session.connection.receiver.speaking.on("start", (discordUserId) => {
+      this.captureSpeaker(session, discordUserId, "voice_receiver_speaking");
+    });
+
+    for (const discordUserId of initialSpeakerUserIds) {
+      this.captureSpeaker(session, discordUserId, "stage_voice_state");
+    }
+
+    for (const discordUserId of session.connection.receiver.speaking.users.keys()) {
+      this.captureSpeaker(session, discordUserId, "voice_receiver_speaking");
+    }
+  }
+
+  captureSpeaker(
+    session: ActiveRecordingSession,
+    discordUserId: string,
+    trigger: SpeakerCaptureTrigger,
+  ): void {
+    void this.handleSpeakerStart(session, discordUserId, trigger);
   }
 
   cancelActiveSegments(session: ActiveRecordingSession, reason: string): void {
@@ -64,6 +97,7 @@ export class SpeakerCapture {
   private async handleSpeakerStart(
     session: ActiveRecordingSession,
     discordUserId: string,
+    trigger: SpeakerCaptureTrigger,
   ): Promise<void> {
     if (session.stopping) return;
 
@@ -76,6 +110,7 @@ export class SpeakerCapture {
         guildId: session.guildId,
         channelId: session.channelId,
         discordUserId,
+        trigger,
       });
       return;
     }
@@ -156,6 +191,7 @@ export class SpeakerCapture {
         speakerLabel: participant.speaker_label,
         segmentId,
         relativeStartMs,
+        trigger,
       });
 
       log.info("segment.file_opened", {
@@ -192,6 +228,7 @@ export class SpeakerCapture {
         channelId: session.channelId,
         discordUserId,
         segmentId,
+        trigger,
         error,
       });
     } finally {

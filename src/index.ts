@@ -15,11 +15,21 @@ db.markInterruptedSessionsFailed();
 const recorder = new Recorder(db);
 let shuttingDown = false;
 
-client.once(Events.ClientReady, (readyClient) => {
+client.once(Events.ClientReady, async (readyClient) => {
   log.info("discord.client_ready", {
     clientId: readyClient.user.id,
     username: readyClient.user.username,
   });
+
+  try {
+    const guild = await readyClient.guilds.fetch(env.DISCORD_GUILD_ID);
+    await recorder.sendRecordingRemindersForActiveStages(guild);
+  } catch (error) {
+    log.error("recording.active_stage_scan_failed", {
+      guildId: env.DISCORD_GUILD_ID,
+      error,
+    });
+  }
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -53,6 +63,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
+client.on(Events.StageInstanceCreate, async (stageInstance) => {
+  try {
+    await recorder.handleStageInstanceCreate(stageInstance);
+  } catch (error) {
+    log.error("discord.stage_instance_create_failed", {
+      guildId: stageInstance.guildId,
+      channelId: stageInstance.channelId,
+      stageInstanceId: stageInstance.id,
+      error,
+    });
+  }
+});
+
 client.on(Events.StageInstanceDelete, async (stageInstance) => {
   try {
     await recorder.handleStageInstanceDelete(stageInstance);
@@ -61,6 +84,19 @@ client.on(Events.StageInstanceDelete, async (stageInstance) => {
       guildId: stageInstance.guildId,
       channelId: stageInstance.channelId,
       stageInstanceId: stageInstance.id,
+      error,
+    });
+  }
+});
+
+client.on(Events.VoiceStateUpdate, (oldState, newState) => {
+  try {
+    recorder.handleVoiceStateUpdate(oldState, newState);
+  } catch (error) {
+    log.error("discord.voice_state_update_failed", {
+      guildId: newState.guild.id,
+      channelId: newState.channelId,
+      discordUserId: newState.id,
       error,
     });
   }

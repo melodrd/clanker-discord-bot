@@ -3,7 +3,11 @@ import { env } from "../config/env.js";
 import type { SessionStats } from "../db/database.js";
 import { relativeMs } from "../utils/time.js";
 import { formatDuration, formatUtcDisplay } from "./format.js";
-import type { ActiveRecordingSession, StopSummary } from "./types.js";
+import type {
+  ActiveRecordingSession,
+  StopSource,
+  StopSummary,
+} from "./types.js";
 
 const defaultEmbedColor = 0xecabcd;
 const unauthorizedMessage = "You are not allowed to use recording commands.";
@@ -37,6 +41,26 @@ export function createRecordingStartedEmbed(
     { name: "Session ID", value: sessionId, inline: true },
     { name: "Channel", value: `<#${channelId}>`, inline: true },
   );
+}
+
+export function createRecordingReminderEmbed(channelId: string): EmbedBuilder {
+  return createRecordingEmbed(
+    "Do you want to record this meeting?",
+    `If you want to record this conversation, type \`/record start\` while you are in <#${channelId}>.
+
+If the conversation should not be recorded, ignore this message.`,
+  );
+}
+
+export function createProcessingRecordingEmbed(
+  source: StopSource,
+): EmbedBuilder {
+  const message =
+    source === "stage_ended"
+      ? "The meeting ended. Working on the transcript and summary now; hold on."
+      : "Recording stopped. Working on the transcript and summary now; hold on.";
+
+  return createRecordingEmbed("Working!", message);
 }
 
 export function createIdleStatusEmbed(): EmbedBuilder {
