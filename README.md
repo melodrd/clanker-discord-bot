@@ -54,6 +54,7 @@ DEEPGRAM_API=
 ALLOWED_DISCORD_USER_IDS=
 DATABASE_PATH=
 OPENROUTER_API_KEY=
+OPENROUTER_MODEL=
 ```
 
 ## Environment
@@ -70,15 +71,20 @@ Optional environment variables:
 
 - `DATABASE_PATH` - defaults to `./data/clanker.sqlite`
 - `OPENROUTER_API_KEY` - leave blank to disable meeting summaries
-- `OPENROUTER_MODEL` - defaults to `openai/gpt-oss-120b:free`
-- `OPENROUTER_FALLBACK_MODEL` - defaults to `z-ai/glm-4.5-air:free`
-- `OPENROUTER_TIMEOUT_MS` - defaults to `360000`
-- `OPENROUTER_MAX_TOKENS` - defaults to `140000`
+- `OPENROUTER_MODEL` - comma-separated model retry order; defaults to `openai/gpt-oss-120b:free, z-ai/glm-4.5-air:free`
+- `OPENROUTER_TIMEOUT_MS` - defaults to `120000`
+- `OPENROUTER_MAX_TOKENS` - defaults to `100000`
 - `OPENROUTER_TEMPERATURE` - defaults to `0.2`
 - `RECORDING_MAX_DURATION_MS` - defaults to `14400000`
 - `RECORDING_IDLE_STOP_MS` - defaults to `900000`
 
 `ALLOWED_DISCORD_USER_IDS` is a comma-separated allowlist. If it is empty, no one can use the `/record` commands.
+
+For example:
+
+```env
+OPENROUTER_MODEL=openrouter/owl-alpha, z-ai/glm-4.5-air:free, openai/gpt-oss-120b:free, nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free
+```
 
 ## Run
 

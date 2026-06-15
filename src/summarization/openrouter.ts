@@ -89,12 +89,6 @@ async function readJsonResponse(response: Response): Promise<unknown> {
   }
 }
 
-function completionModels(): string[] {
-  return [env.OPENROUTER_MODEL, env.OPENROUTER_FALLBACK_MODEL].filter(
-    (model, index, models) => models.indexOf(model) === index,
-  );
-}
-
 async function requestOpenRouterChatCompletion(
   input: OpenRouterCompletionInput,
   model: string,
@@ -151,7 +145,7 @@ export async function createOpenRouterChatCompletion(
   }
 
   const errors: string[] = [];
-  const models = completionModels();
+  const models = env.OPENROUTER_MODEL;
 
   for (const [index, model] of models.entries()) {
     try {
