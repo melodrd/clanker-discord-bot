@@ -4,10 +4,6 @@ import { log } from "../utils/log.js";
 config();
 
 const maxTimerDelayMs = 2_147_483_647;
-const defaultOpenRouterModels = [
-  "openai/gpt-oss-120b:free",
-  "z-ai/glm-4.5-air:free",
-] as const;
 
 const botRequiredEnvVars = [
   "DISCORD_TOKEN",
@@ -35,25 +31,6 @@ function parseAllowedUserIds(value: string): Set<string> {
       .map((id) => id.trim())
       .filter(Boolean),
   );
-}
-
-function optionalCommaSeparatedList(
-  name: string,
-  fallback: readonly string[],
-): string[] {
-  const value = process.env[name]?.trim();
-  if (!value) return [...fallback];
-
-  const items = value
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
-
-  if (items.length === 0) {
-    throw new Error(`${name} must include at least one value`);
-  }
-
-  return [...new Set(items)];
 }
 
 function optionalNonNegativeInteger(name: string, fallback: number): number {
@@ -146,7 +123,7 @@ export const env = {
   DEEPGRAM_API: process.env.DEEPGRAM_API ?? "",
   ALLOWED_DISCORD_USER_IDS: allowedDiscordUserIds,
   DATABASE_PATH: process.env.DATABASE_PATH ?? "./data/clanker.sqlite",
-  RECORDINGS_DIR: "./recordings",
+  RECORDINGS_DIR: process.env.RECORDINGS_DIR ?? "./recordings",
   RECORDING_MAX_DURATION_MS: optionalNonNegativeInteger(
     "RECORDING_MAX_DURATION_MS",
     4 * 60 * 60 * 1000,
@@ -159,10 +136,7 @@ export const env = {
   DEEPGRAM_MODEL: "nova-3",
   DEEPGRAM_TIMEOUT_MS: 60_000,
   OPENROUTER_API_KEY: optionalString("OPENROUTER_API_KEY"),
-  OPENROUTER_MODEL: optionalCommaSeparatedList(
-    "OPENROUTER_MODEL",
-    defaultOpenRouterModels,
-  ),
+  OPENROUTER_MODEL: "openrouter/free",
   OPENROUTER_TIMEOUT_MS: optionalPositiveInteger(
     "OPENROUTER_TIMEOUT_MS",
     120_000,
