@@ -146,7 +146,7 @@ export const env = {
   DEEPGRAM_API: process.env.DEEPGRAM_API ?? "",
   ALLOWED_DISCORD_USER_IDS: allowedDiscordUserIds,
   DATABASE_PATH: process.env.DATABASE_PATH ?? "./data/clanker.sqlite",
-  RECORDINGS_DIR: "./recordings",
+  RECORDINGS_DIR: process.env.RECORDINGS_DIR ?? "./recordings",
   RECORDING_MAX_DURATION_MS: optionalNonNegativeInteger(
     "RECORDING_MAX_DURATION_MS",
     4 * 60 * 60 * 1000,
