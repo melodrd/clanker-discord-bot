@@ -1,3 +1,4 @@
+import { mkdirSync } from "node:fs";
 import { EmbedBuilder, Events, MessageFlags } from "discord.js";
 import { env, validateBotEnv } from "./config/env.js";
 import { AppDatabase } from "./db/database.js";
@@ -8,6 +9,8 @@ import { log } from "./utils/log.js";
 validateBotEnv();
 
 log.info("app.startup", { nodeVersion: process.version });
+
+mkdirSync(env.RECORDINGS_DIR, { recursive: true });
 
 const db = new AppDatabase(env.DATABASE_PATH);
 db.markInterruptedSessionsFailed();
