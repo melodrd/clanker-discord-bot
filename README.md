@@ -73,8 +73,8 @@ Optional environment variables:
 - `RECORDINGS_DIR` - defaults to `./recordings`
 - `OPENROUTER_API_KEY` - leave blank to disable meeting summaries
 - `OPENROUTER_MODEL` - comma-separated model retry order; defaults to `openrouter/free, tencent/hy3:free, openai/gpt-oss-20b:free, poolside/laguna-m.1:free`
-- `OPENROUTER_TIMEOUT_MS` - defaults to `120000`
-- `OPENROUTER_MAX_TOKENS` - defaults to `100000`
+- `OPENROUTER_TIMEOUT_MS` - defaults to `300000`
+- `OPENROUTER_MAX_TOKENS` - defaults to `8000`
 - `OPENROUTER_TEMPERATURE` - defaults to `0.2`
 - `RECORDING_MAX_DURATION_MS` - defaults to `14400000`
 - `RECORDING_IDLE_STOP_MS` - defaults to `900000`

@@ -168,12 +168,12 @@ export const env = {
   ),
   OPENROUTER_TIMEOUT_MS: optionalPositiveInteger(
     "OPENROUTER_TIMEOUT_MS",
-    120_000,
+    300_000,
     { max: maxTimerDelayMs },
   ),
   OPENROUTER_MAX_TOKENS: optionalPositiveInteger(
     "OPENROUTER_MAX_TOKENS",
-    100_000,
+    8_000,
   ),
   OPENROUTER_TEMPERATURE: optionalBoundedNumber("OPENROUTER_TEMPERATURE", 0.2, {
     min: 0,

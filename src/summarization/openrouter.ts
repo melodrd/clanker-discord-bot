@@ -125,7 +125,13 @@ async function requestOpenRouterChatCompletion(
     const rawResponse = await readJsonResponse(response);
     return firstChoiceContent(rawResponse);
   } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
+    // The timeout aborts the controller, which surfaces either as a raw
+    // AbortError or, if it fires mid-body-read, as a rewrapped "malformed
+    // JSON" error. Check the signal so both report as a timeout.
+    if (
+      controller.signal.aborted ||
+      (error instanceof Error && error.name === "AbortError")
+    ) {
       throw new Error(
         `OpenRouter request timed out after ${env.OPENROUTER_TIMEOUT_MS} ms`,
       );
