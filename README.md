@@ -72,6 +72,7 @@ Optional environment variables:
 - `DATABASE_PATH` - defaults to `./data/clanker.sqlite`
 - `RECORDINGS_DIR` - defaults to `./recordings`
 - `OPENROUTER_API_KEY` - leave blank to disable meeting summaries
+- `OPENROUTER_MODEL` - comma-separated model retry order; defaults to `openrouter/free, tencent/hy3:free, openai/gpt-oss-20b:free, poolside/laguna-m.1:free`
 - `OPENROUTER_TIMEOUT_MS` - defaults to `120000`
 - `OPENROUTER_MAX_TOKENS` - defaults to `100000`
 - `OPENROUTER_TEMPERATURE` - defaults to `0.2`
@@ -80,7 +81,7 @@ Optional environment variables:
 
 `ALLOWED_DISCORD_USER_IDS` is a comma-separated allowlist. If it is empty, no one can use the `/record` commands.
 
-Meeting summaries always use OpenRouter's `openrouter/free` router.
+Meeting summaries use OpenRouter, trying each model in `OPENROUTER_MODEL` in order until one succeeds.
 
 ## Run
 

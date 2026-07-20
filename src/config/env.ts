@@ -5,6 +5,13 @@ config();
 
 const maxTimerDelayMs = 2_147_483_647;
 
+const defaultOpenRouterModels = [
+  "openrouter/free",
+  "tencent/hy3:free",
+  "openai/gpt-oss-20b:free",
+  "poolside/laguna-m.1:free",
+] as const;
+
 const botRequiredEnvVars = [
   "DISCORD_TOKEN",
   "DISCORD_CLIENT_ID",
@@ -31,6 +38,25 @@ function parseAllowedUserIds(value: string): Set<string> {
       .map((id) => id.trim())
       .filter(Boolean),
   );
+}
+
+function optionalCommaSeparatedList(
+  name: string,
+  fallback: readonly string[],
+): string[] {
+  const value = process.env[name]?.trim();
+  if (!value) return [...fallback];
+
+  const items = value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  if (items.length === 0) {
+    throw new Error(`${name} must include at least one value`);
+  }
+
+  return [...new Set(items)];
 }
 
 function optionalNonNegativeInteger(name: string, fallback: number): number {
@@ -136,7 +162,10 @@ export const env = {
   DEEPGRAM_MODEL: "nova-3",
   DEEPGRAM_TIMEOUT_MS: 60_000,
   OPENROUTER_API_KEY: optionalString("OPENROUTER_API_KEY"),
-  OPENROUTER_MODEL: "openrouter/free",
+  OPENROUTER_MODEL: optionalCommaSeparatedList(
+    "OPENROUTER_MODEL",
+    defaultOpenRouterModels,
+  ),
   OPENROUTER_TIMEOUT_MS: optionalPositiveInteger(
     "OPENROUTER_TIMEOUT_MS",
     120_000,

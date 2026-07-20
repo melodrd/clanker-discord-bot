@@ -1,4 +1,5 @@
 import { env } from "../config/env.js";
+import { log } from "../utils/log.js";
 
 export type OpenRouterChatMessage = {
   role: "system" | "user" | "assistant";
@@ -143,5 +144,21 @@ export async function createOpenRouterChatCompletion(
     throw new Error("OpenRouter API key is not configured");
   }
 
-  return requestOpenRouterChatCompletion(input, env.OPENROUTER_MODEL);
+  const models = env.OPENROUTER_MODEL;
+  let lastError: unknown;
+
+  for (const model of models) {
+    try {
+      return await requestOpenRouterChatCompletion(input, model);
+    } catch (error) {
+      lastError = error;
+      log.warn(
+        `OpenRouter model "${model}" failed, trying next fallback: ${errorMessage(error)}`,
+      );
+    }
+  }
+
+  throw new Error(
+    `All OpenRouter models failed (${models.join(", ")}): ${errorMessage(lastError)}`,
+  );
 }
